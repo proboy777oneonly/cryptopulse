@@ -12,16 +12,16 @@ import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useApp } from '@/stores/app-store'
-import { useLive } from '@/stores/live-store'
-import { EX_MAP, fmtPrice, fmtTimeSec, fmtUsd, type MovementWindowConfig } from '@/engines/types'
+import { clearMovementAlerts, useLive } from '@/stores/live-store'
+import { EX_MAP, fmtPrice, fmtTimeSec, fmtUsd, type MovementAlert, type MovementWindowConfig } from '@/engines/types'
 import { toastSuccess } from '@/engines/notifier'
 import { EmptyState } from '@/components/ui-bits'
 import { cn } from '@/lib/utils'
 
 const MARKET_KEYS = ['BINANCE_F', 'BINANCE_S', 'BYBIT_F', 'BYBIT_S', 'OKX_F', 'OKX_S'] as const
 
-const WIN_W = 430
-const WIN_H_EST = 300
+const WIN_W = 540
+const WIN_H_EST = 380
 const GAP = 16
 
 /** Позиция по умолчанию — каскадом слева направо */
@@ -226,6 +226,41 @@ function MovementSettingsDialog({ win, open, onOpenChange }: { win: MovementWind
 
 const EMPTY_EVENTS: never[] = []
 
+// ─── Строка алерта — крупное читаемое время + чёткие колонки ────────
+
+function MovementAlertRow({ a }: { a: MovementAlert }) {
+  const color = EX_MAP[a.exchange].color
+  const up = a.changePct >= 0
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -10 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.35 }}
+      className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-2.5 py-2 transition-colors hover:border-[color-mix(in_srgb,var(--acc)_30%,transparent)]"
+    >
+      <span
+        className="cp-num flex h-7 w-[74px] shrink-0 items-center justify-center rounded-lg bg-[var(--card)] text-[11px] font-bold text-[var(--foreground)]"
+        style={{ boxShadow: 'inset 0 0 0 1px var(--border)' }}
+        title={new Date(a.time).toLocaleString('ru-RU')}
+      >
+        {fmtTimeSec(a.time)}
+      </span>
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color, boxShadow: `0 0 8px ${color}88` }} title={EX_MAP[a.exchange].name} />
+      <span
+        className="shrink-0 rounded px-1 py-0.5 text-[8px] font-black"
+        style={{ background: a.market === 'F' ? '#f59e0b1e' : '#22d3ee1e', color: a.market === 'F' ? '#f59e0b' : '#22d3ee' }}
+      >
+        {a.market}
+      </span>
+      <span className="w-[86px] shrink-0 truncate text-[13px] font-black">{a.symbol}</span>
+      <span className="cp-num w-[74px] shrink-0 text-right text-[15px] font-black" style={{ color: up ? 'var(--pos)' : 'var(--neg)', textShadow: `0 0 16px ${up ? 'var(--pos)' : 'var(--neg)'}44` }}>
+        {up ? '▲' : '▼'}{Math.abs(a.changePct).toFixed(1)}%
+      </span>
+      <span className="cp-num ml-auto shrink-0 text-[11px] font-semibold text-[var(--muted-foreground)]">{fmtPrice(a.price)}</span>
+    </motion.div>
+  )
+}
+
 // ─── Компактное перетаскиваемое окно движений ─────────────────────────
 
 function MovementWindowCard({ win, index, z, onFront, wide }: {
@@ -288,7 +323,7 @@ function MovementWindowCard({ win, index, z, onFront, wide }: {
       style={{
         ...style,
         zIndex,
-        width: 'min(430px, calc(100vw - 32px))',
+        width: 'min(540px, calc(100vw - 32px))',
         borderTop: win.enabled ? '2px solid color-mix(in srgb, var(--pos) 55%, transparent)' : '2px solid var(--border)',
       }}
     >
@@ -301,58 +336,67 @@ function MovementWindowCard({ win, index, z, onFront, wide }: {
         onPointerCancel={onPointerUp}
         onDoubleClick={() => { setDragPos(null); updateMovementWindow(win.id, { x: defaultPos(index, wide).x, y: defaultPos(index, wide).y }) }}
         className={cn(
-          'flex touch-none items-center gap-1.5 border-b border-[var(--border)] px-2.5 py-2',
+          'flex touch-none items-center gap-1.5 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--muted)_45%,transparent)] px-2.5 py-2',
           dragged ? 'cursor-grabbing' : 'cursor-grab',
         )}
         title="Потяните за шапку, чтобы переместить окно · двойной клик — вернуть на место"
       >
-        <GripHorizontal className={cn('h-3.5 w-3.5 shrink-0 transition-colors', dragged ? 'text-[var(--acc)]' : 'text-[var(--muted-foreground)]')} />
-        <ChartCandlestick className="h-3.5 w-3.5 shrink-0" style={{ color: win.enabled ? 'var(--pos)' : 'var(--muted-foreground)' }} />
-        <span className="truncate text-xs font-black">
+        <GripHorizontal className={cn('h-4 w-4 shrink-0 transition-colors', dragged ? 'text-[var(--acc)]' : 'text-[var(--muted-foreground)]')} />
+        <ChartCandlestick className="h-4 w-4 shrink-0" style={{ color: win.enabled ? 'var(--pos)' : 'var(--muted-foreground)' }} />
+        <span className="truncate text-[13px] font-black">
           {win.name.toUpperCase()}
         </span>
-        <span className="cp-num shrink-0 rounded-md bg-[var(--muted)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--muted-foreground)]">
+        <span className="cp-num shrink-0 rounded-md bg-[var(--muted)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--muted-foreground)]">
           {win.period.toUpperCase()} ±{win.thresholdPct}%
         </span>
-        <span className="cp-num ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-bold" style={{ color: alerts.length > 0 ? 'var(--pos)' : 'var(--muted-foreground)', background: alerts.length > 0 ? 'color-mix(in srgb, var(--pos) 12%, transparent)' : 'var(--muted)' }}>
+        <span className="cp-num ml-auto shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold" style={{ color: alerts.length > 0 ? 'var(--pos)' : 'var(--muted-foreground)', background: alerts.length > 0 ? 'color-mix(in srgb, var(--pos) 12%, transparent)' : 'var(--muted)' }}>
           {alerts.length}
         </span>
         <button
           onClick={() => setSettingsOpen(true)}
           title="Настройки окна"
           aria-label="Настройки окна движений"
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--acc)]"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--acc)]"
         >
-          <Settings2 className="h-3.5 w-3.5" />
+          <Settings2 className="h-4 w-4" />
         </button>
         <button
           onClick={() => updateMovementWindow(win.id, { enabled: !win.enabled })}
-          className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-[var(--muted)]', win.enabled ? 'text-[var(--pos)]' : 'text-[var(--muted-foreground)]')}
+          className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-[var(--muted)]', win.enabled ? 'text-[var(--pos)]' : 'text-[var(--muted-foreground)]')}
           title={win.enabled ? 'Остановить окно' : 'Запустить окно'}
           aria-label="Питание окна движений"
         >
-          <Power className="h-3 w-3" />
+          <Power className="h-3.5 w-3.5" />
         </button>
-        <button onClick={() => removeMovementWindow(win.id)} className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--destructive)]" title="Удалить окно" aria-label="Удалить окно движений">
-          <Trash2 className="h-3 w-3" />
+        <button
+          onClick={() => { clearMovementAlerts(win.id); toastSuccess('Окно очищено', `${win.name}: лента сигналов сброшена`) }}
+          disabled={alerts.length === 0}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--acc)] disabled:opacity-40 disabled:hover:bg-transparent"
+          title="Очистить окно (убрать сигналы)"
+          aria-label="Очистить окно движений"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+        <button onClick={() => removeMovementWindow(win.id)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[color-mix(in_srgb,var(--destructive)_15%,transparent)] hover:text-[var(--destructive)]" title="Удалить окно" aria-label="Удалить окно движений">
+          <X className="h-4 w-4" />
         </button>
       </div>
 
-      {/* Компактное тело */}
-      <div className="min-h-[96px] max-h-[240px] overflow-y-auto p-2">
+      {/* Тело окна */}
+      <div className="min-h-[128px] max-h-[340px] overflow-y-auto p-2.5">
         {!win.enabled ? (
-          <div className="flex h-[88px] flex-col items-center justify-center gap-1 text-center">
+          <div className="flex h-[112px] flex-col items-center justify-center gap-1 text-center">
             <Power className="h-5 w-5 text-[var(--muted-foreground)] opacity-50" />
             <span className="text-[11px] font-semibold text-[var(--muted-foreground)]">Окно остановлено</span>
           </div>
         ) : enabledMarkets === 0 ? (
-          <div className="flex h-[88px] flex-col items-center justify-center gap-1 text-center">
+          <div className="flex h-[112px] flex-col items-center justify-center gap-1 text-center">
             <Settings2 className="h-5 w-5 text-[var(--muted-foreground)] opacity-50" />
             <span className="text-[11px] font-semibold text-[var(--muted-foreground)]">Рынки не выбраны</span>
             <span className="text-[10px] text-[var(--muted-foreground)] opacity-70">включите их в шестерёнке</span>
           </div>
         ) : alerts.length === 0 ? (
-          <div className="flex h-[88px] flex-col items-center justify-center gap-1 text-center">
+          <div className="flex h-[112px] flex-col items-center justify-center gap-1 text-center">
             <TrendingUp className="h-5 w-5 text-[var(--muted-foreground)] opacity-50" />
             <span className="text-[11px] font-semibold text-[var(--muted-foreground)]">Ожидание движений…</span>
             <span className="cp-num text-[10px] text-[var(--muted-foreground)] opacity-70">
@@ -360,27 +404,10 @@ function MovementWindowCard({ win, index, z, onFront, wide }: {
             </span>
           </div>
         ) : (
-          <div className="space-y-1">
-            {alerts.map((a) => {
-              const color = EX_MAP[a.exchange].color
-              return (
-                <motion.div
-                  key={a.id}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.35 }}
-                  className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--muted)] px-2 py-1 text-[11px]"
-                >
-                  <span className="cp-num w-[52px] shrink-0 text-[9px] text-[var(--muted-foreground)]">{fmtTimeSec(a.time)}</span>
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
-                  <span className="w-[74px] shrink-0 truncate font-black">{a.symbol}</span>
-                  <span className="cp-num w-[62px] shrink-0 text-right font-black" style={{ color: a.changePct >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                    {a.changePct >= 0 ? '▲' : '▼'}{Math.abs(a.changePct).toFixed(1)}%
-                  </span>
-                  <span className="cp-num ml-auto hidden shrink-0 text-[10px] text-[var(--muted-foreground)] sm:block">{fmtPrice(a.price)}</span>
-                </motion.div>
-              )
-            })}
+          <div className="space-y-1.5">
+            {alerts.map((a) => (
+              <MovementAlertRow key={a.id} a={a} />
+            ))}
           </div>
         )}
       </div>
@@ -426,18 +453,17 @@ export function MovementsView() {
   // высота полотна: ниже самого нижнего окна
   const canvasH = wide
     ? Math.max(
-      420,
-      ...movementWindows.map((w, i) => (w.y ?? defaultPos(i, true).y) + 320),
+      480,
+      ...movementWindows.map((w, i) => (w.y ?? defaultPos(i, true).y) + 400),
     )
     : undefined
 
   return (
     <div className="space-y-3">
-      {/* Тулбар: только создание окон */}
-      <div className="cp-border-glow flex flex-wrap items-center gap-2.5 rounded-2xl bg-card px-4 py-2.5">
+      {/* Тулбар: создание окон */}
+      <div className="cp-border-glow flex flex-wrap items-center gap-2.5 rounded-2xl bg-card px-4 py-3">
         <Button
-          size="sm"
-          className="h-9 rounded-xl px-4"
+          className="h-10 rounded-xl px-5 text-sm"
           disabled={movementWindows.length >= 6}
           onClick={() => {
             addMovementWindow()
@@ -446,7 +472,7 @@ export function MovementsView() {
         >
           <Plus className="mr-1.5 h-4 w-4" /> Новое окно
         </Button>
-        <span className="cp-num rounded-md border border-[var(--border)] bg-[var(--muted)] px-2 py-1 text-[10px] font-bold text-[var(--muted-foreground)]">
+        <span className="cp-num rounded-md border border-[var(--border)] bg-[var(--muted)] px-2.5 py-1.5 text-[11px] font-bold text-[var(--muted-foreground)]">
           {movementWindows.length}/6 окон
         </span>
         <span className="ml-auto hidden text-[10px] text-[var(--muted-foreground)] lg:block">

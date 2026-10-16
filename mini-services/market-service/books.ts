@@ -172,6 +172,9 @@ interface WallState {
   lastSeen: number
   lastEmit: number
   notional: number
+  distPct: number
+  vol24h: number
+  comboId: string
 }
 
 export interface WsHealth {
@@ -212,6 +215,37 @@ export class BookEngine {
     // ускоренное обновление watch-сетов после старта (пока наполняются тикеры)
     setTimeout(() => this.refreshWatchSets(), 12_000)
     setTimeout(() => this.refreshWatchSets(), 40_000)
+    // пульс живых стен: клиент видит возраст и «простоёт» стены в стакане
+    setInterval(() => this.heartbeatWalls(), 10_000)
+  }
+
+  /** Пере-отправка живых стен: молодые — каждые ~10с, старые — каждые ~30с */
+  private heartbeatWalls() {
+    const now = Date.now()
+    const emits: WallRow[] = []
+    for (const [key, st] of this.walls.entries()) {
+      const age = now - st.firstSeen
+      const alive = now - st.lastSeen < 45_000
+      if (!alive) continue
+      const interval = age < 90_000 ? 11_000 : 31_000
+      if (now - st.lastEmit < interval) continue
+      const [ex, m, symbol, side, priceStr] = key.split('|')
+      emits.push({
+        id: this.wallId(ex as Ex, m as Mkt, symbol, side as 'BID' | 'ASK', Number(priceStr)),
+        ex: ex as Ex, m: m as Mkt, symbol, side: side as 'BID' | 'ASK',
+        price: Number(priceStr),
+        notionalUsd: st.notional,
+        distPct: st.distPct,
+        vol24h: st.vol24h,
+        ts: now,
+        firstSeen: st.firstSeen,
+      })
+      st.lastEmit = now
+    }
+    if (emits.length > 0) {
+      this.wallCount += emits.length
+      this.onWalls?.(emits)
+    }
   }
 
   /** Watch-сет для внешних WS-модулей (Binance) */
@@ -312,16 +346,19 @@ export class BookEngine {
 
     const emits: WallRow[] = []
     for (const w of found) {
-      const key = `${ex}|${m}|${symbol}|${w.side}|${w.price.toPrecision(10)}`
+      const priceStr = w.price.toPrecision(10)
+      const key = `${ex}|${m}|${symbol}|${w.side}|${priceStr}`
       const st = this.walls.get(key)
       if (!st) {
-        this.walls.set(key, { firstSeen: now, lastSeen: now, lastEmit: 0, notional: w.notional })
+        this.walls.set(key, { firstSeen: now, lastSeen: now, lastEmit: 0, notional: w.notional, distPct: w.distPct, vol24h: vol, comboId: `${ex}_${m}` })
         if (!baseline) {
           emits.push(this.toRow(ex, m, symbol, w, vol, now))
           this.walls.get(key)!.lastEmit = now
         }
       } else {
         st.lastSeen = now
+        if (vol > 0) st.vol24h = vol
+        st.distPct = w.distPct
         // рост стены — повторный сигнал
         if (w.notional >= st.notional * GROW_REEMIT_RATIO && now - st.lastEmit > GROW_REEMIT_COOLDOWN) {
           emits.push(this.toRow(ex, m, symbol, w, vol, now))
@@ -344,15 +381,22 @@ export class BookEngine {
     }
   }
 
+  /** Стабильный id стены — клиент дедуплицирует события по нему */
+  private wallId(ex: Ex, m: Mkt, symbol: string, side: 'BID' | 'ASK', price: number): string {
+    return `w_${ex}_${m}_${symbol}_${side}_${price.toPrecision(10)}`
+  }
+
   private toRow(ex: Ex, m: Mkt, symbol: string, w: { side: 'BID' | 'ASK'; price: number; notional: number; distPct: number }, vol: number, now: number): WallRow {
+    const st = this.walls.get(`${ex}|${m}|${symbol}|${w.side}|${w.price.toPrecision(10)}`)
     return {
-      id: `w_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      id: this.wallId(ex, m, symbol, w.side, w.price),
       ex, m, symbol, side: w.side,
       price: w.price,
       notionalUsd: w.notional,
       distPct: Math.round(w.distPct * 100) / 100,
       vol24h: vol,
       ts: now,
+      firstSeen: st?.firstSeen ?? now,
     }
   }
 

@@ -83,3 +83,12 @@ export function markRead(id: string) {
 export function clearNotifications() {
   useLive.setState({ notifications: [], unread: 0 })
 }
+
+/** Очистить ленту алертов конкретного окна движений */
+export function clearMovementAlerts(winId: string) {
+  const { movementAlerts } = useLive.getState()
+  if (!movementAlerts[winId]) return
+  const next = { ...movementAlerts }
+  delete next[winId]
+  useLive.setState({ movementAlerts: next })
+}

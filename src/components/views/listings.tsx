@@ -7,7 +7,6 @@ import {
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { useLive } from '@/stores/live-store'
-import type { ListingEvent } from '@/engines/types'
 import { EmptyState } from '@/components/ui-bits'
 import { cn } from '@/lib/utils'
 
@@ -90,21 +89,33 @@ export function ListingsView() {
 
   return (
     <div className="space-y-4">
-      {/* Тулбар */}
+      {/* Тулбар: поиск + статистика в одном ряду */}
       <div className="cp-border-glow flex flex-wrap items-center gap-2 rounded-2xl bg-card px-4 py-3">
-        <div className="flex items-center gap-2 text-sm font-black">
-          <Radar className="h-4 w-4" style={{ color: 'var(--acc)' }} />
-          Листинг / Делистинг
-        </div>
-        <span className="hidden items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--muted-foreground)] sm:flex">
-          BINANCE · BYBIT · OKX · F+S
-        </span>
-        <span className="cp-num hidden items-center gap-1.5 text-[10px] text-[var(--muted-foreground)] md:flex">
-          <CalendarClock className="h-3.5 w-3.5" /> за 7 дней: {stats.weekNew} событий
-        </span>
-        <div className="relative ml-auto w-full sm:w-52">
+        <div className="relative w-full sm:w-60">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Поиск: SOL, Binance…" className="h-9 pl-9 text-xs" />
+        </div>
+        <div className="cp-num flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 py-1.5 text-[11px] font-bold text-[var(--muted-foreground)]">
+          <CalendarClock className="h-3.5 w-3.5" /> {stats.weekNew} за 7 дней
+        </div>
+        <div className="ml-auto flex items-center gap-1.5">
+          {EX3.map((e) => (
+            <button
+              key={e.id}
+              onClick={() => toggleEx(e.id)}
+              className={cn(
+                'flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold transition-all',
+                ex === e.id ? 'text-white' : 'border-[var(--border)] bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+              )}
+              style={ex === e.id
+                ? { background: `linear-gradient(135deg, ${e.color}, color-mix(in srgb, ${e.color} 65%, #000))`, borderColor: 'transparent', boxShadow: `0 0 14px -4px ${e.color}` }
+                : undefined}
+              aria-pressed={ex === e.id}
+            >
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: e.color }} />
+              {e.name}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -120,7 +131,7 @@ export function ListingsView() {
             <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-[var(--muted-foreground)]">
               <span style={{ color: s.color }}>{s.icon}</span> {s.label}
             </div>
-            <div className="cp-num mt-1 text-xl font-black" style={{ color: s.color }}>{s.value}</div>
+            <div className="cp-num mt-1 text-2xl font-black" style={{ color: s.color }}>{s.value}</div>
           </div>
         ))}
       </div>
@@ -134,13 +145,6 @@ export function ListingsView() {
         <Chip active={kind === 'delisting'} onClick={() => setKind('delisting')} color="#f43f5e">
           <ListMinus className="h-3.5 w-3.5" /> Делисты ({stats.delisting})
         </Chip>
-        <span className="mx-1 h-5 w-px bg-[var(--border)]" />
-        {EX3.map((e) => (
-          <Chip key={e.id} active={ex === e.id} onClick={() => toggleEx(e.id)} color={e.color}>
-            <span className="h-1.5 w-1.5 rounded-full" style={{ background: e.color }} />
-            {e.name}
-          </Chip>
-        ))}
         <span className="mx-1 h-5 w-px bg-[var(--border)]" />
         {(['ALL', 'F', 'S'] as const).map((m) => (
           <Chip key={m} active={mkt === m} onClick={() => setMkt(m)}>
@@ -184,24 +188,17 @@ export function ListingsView() {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.97 }}
                   transition={{ duration: 0.3, ease: 'easeOut' }}
-                  className="cp-border-glow rounded-2xl bg-card p-4"
+                  className="cp-border-glow rounded-2xl bg-card p-4 transition-transform hover:-translate-y-0.5"
                   style={{ borderLeft: `3px solid ${color}` }}
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span
                       className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[9px] font-black tracking-wider"
-                      style={{ background: 'color-mix(in srgb, var(--pos) 12%, transparent)', color: 'var(--pos)' }}
+                      style={{ background: `color-mix(in srgb, ${color} 12%, transparent)`, color }}
                     >
-                      <ListPlus className="h-3 w-3" /> ЛИСТИНГ
+                      {isDelist ? <ListMinus className="h-3 w-3" /> : <ListPlus className="h-3 w-3" />}
+                      {isDelist ? 'ДЕЛИСТИНГ' : 'ЛИСТИНГ'}
                     </span>
-                    {isDelist && (
-                      <span
-                        className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[9px] font-black tracking-wider"
-                        style={{ background: 'color-mix(in srgb, var(--neg) 12%, transparent)', color: 'var(--neg)' }}
-                      >
-                        <ListMinus className="h-3 w-3" /> ДЕЛИСТИНГ
-                      </span>
-                    )}
                     <span className="flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[9px] font-black" style={{ borderColor: `${exColor}55`, background: `${exColor}14`, color: exColor }}>
                       <span className="h-1.5 w-1.5 rounded-full" style={{ background: exColor }} />
                       {l.exchange}

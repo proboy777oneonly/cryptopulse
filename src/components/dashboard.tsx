@@ -36,11 +36,11 @@ const NAV: NavItem[] = [
 
 const VIEW_META: Record<ViewId, { title: string; subtitle: string }> = {
   home: { title: 'Главная', subtitle: 'Обзор рынка: топы, страх и жадность, последние сигналы' },
-  densities: { title: 'Плотности', subtitle: '' },
+  densities: { title: '', subtitle: '' },
   arbitrage: { title: 'Арбитраж', subtitle: 'Межбиржевые спреды в реальном времени' },
-  movements: { title: 'Движения', subtitle: 'Binance · Bybit · OKX · фьючерсы и спот' },
-  news: { title: 'Новости', subtitle: 'События, влияющие на крипторынок' },
-  listings: { title: 'Листинг / Делистинг', subtitle: 'Binance · Bybit · OKX · фьючерсы и спот · анонсы + торговая лента' },
+  movements: { title: '', subtitle: '' },
+  news: { title: '', subtitle: '' },
+  listings: { title: '', subtitle: '' },
   notifications: { title: 'Уведомления', subtitle: 'Полный журнал сигналов сессии' },
   monitor: { title: 'Монитор', subtitle: 'Телеметрия market-сервера, движков и коннектов' },
   users: { title: 'Пользователи', subtitle: 'Управление аккаунтами и ролями' },
@@ -133,7 +133,7 @@ export function Dashboard({ children }: { children: ReactElement }) {
           <div className="text-[11px] font-bold">{dataMode === 'live' ? 'Поток данных активен' : dataMode === 'reconnecting' ? 'Переподключение…' : 'Подключение…'}</div>
           <div className="text-[10px] text-[var(--muted-foreground)]">8 бирж · F+S · LIVE</div>
         </div>
-        <span className="cp-num text-[10px] font-bold text-[var(--muted-foreground)]">v3.1.0</span>
+        <span className="cp-num text-[10px] font-bold text-[var(--muted-foreground)]">v3.2.0</span>
       </div>
     </div>
   )

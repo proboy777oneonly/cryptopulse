@@ -72,6 +72,8 @@ export interface WallRow {
   distPct: number
   vol24h: number
   ts: number
+  /** Момент первого обнаружения стены — возраст = now - firstSeen */
+  firstSeen: number
 }
 
 export interface ConnectRow {

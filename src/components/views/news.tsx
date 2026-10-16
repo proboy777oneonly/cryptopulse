@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  AlertTriangle, Bell, CheckCheck, Cpu, Gauge, Layers, ListPlus, Newspaper, Search, Trash2, TrendingUp,
+  AlertTriangle, Bell, CheckCheck, Cpu, ExternalLink, Gauge, Languages, Layers, ListPlus, Loader2, Newspaper, Search, Trash2, TrendingUp,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { clearNotifications, markAllRead, markRead, useLive } from '@/stores/live-store'
@@ -34,28 +34,48 @@ export function NewsView() {
   const [cat, setCat] = useState<(typeof CATEGORIES)[number]>('Все')
   const [query, setQuery] = useState('')
   const [onlyHigh, setOnlyHigh] = useState(false)
+  const [lang, setLang] = useState<'ru' | 'en'>('ru')
+
+  const titleOf = (n: (typeof news)[number]) => (lang === 'ru' ? n.titleRu ?? n.title : n.title)
+  const summaryOf = (n: (typeof news)[number]) => (lang === 'ru' ? n.summaryRu ?? n.summary : n.summary)
 
   const filtered = useMemo(
     () => news.filter((n) =>
       (cat === 'Все' || n.category === cat)
       && (!onlyHigh || n.impact === 'high')
-      && (query === '' || n.title.toLowerCase().includes(query.toLowerCase()) || n.summary.toLowerCase().includes(query.toLowerCase())),
+      && (query === '' || n.title.toLowerCase().includes(query.toLowerCase()) || n.summary.toLowerCase().includes(query.toLowerCase()) || (n.titleRu ?? '').toLowerCase().includes(query.toLowerCase())),
     ),
     [news, cat, query, onlyHigh],
   )
 
   const highCount = news.filter((n) => n.impact === 'high').length
+  const translatedCount = news.filter((n) => n.titleRu).length
+  const translating = lang === 'ru' && translatedCount < Math.min(news.length, 24) && news.length > 0
 
   return (
     <div className="space-y-4">
-      {/* Фильтры */}
+      {/* Тулбар сверху — лента с поиском */}
       <div className="cp-border-glow flex flex-wrap items-center gap-2 rounded-2xl bg-card px-4 py-3">
         <Newspaper className="h-4 w-4" style={{ color: 'var(--acc)' }} />
-        <span className="text-sm font-bold">Лента новостей</span>
+        <span className="text-sm font-black">Лента новостей</span>
         <span className="cp-num rounded-md border border-[color-mix(in_srgb,#f43f5e_35%,transparent)] bg-[color-mix(in_srgb,#f43f5e_8%,transparent)] px-2 py-0.5 text-[10px] font-black" style={{ color: '#f43f5e' }}>
           {highCount} важных
         </span>
-        <div className="relative ml-auto w-full sm:w-56">
+        <button
+          onClick={() => setLang(lang === 'ru' ? 'en' : 'ru')}
+          className={cn(
+            'flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition-all',
+            lang === 'ru' ? 'text-white' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+          )}
+          style={lang === 'ru'
+            ? { background: 'linear-gradient(135deg, var(--acc), var(--acc-2))', borderColor: 'transparent', boxShadow: '0 0 14px -4px var(--glow)' }
+            : { borderColor: 'var(--border)', background: 'var(--muted)' }}
+          aria-pressed={lang === 'ru'}
+          title="Переключить язык заголовков"
+        >
+          <Languages className="h-3.5 w-3.5" /> RU
+        </button>
+        <div className="relative ml-auto w-full sm:w-64">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Поиск по новостям…" className="h-9 pl-9 text-xs" />
         </div>
@@ -102,6 +122,7 @@ export function NewsView() {
           <AnimatePresence initial={false}>
             {filtered.slice(0, 30).map((n) => {
               const imp = IMPACT_STYLE[n.impact]
+              const isRu = !!n.titleRu
               return (
                 <motion.article
                   key={n.id}
@@ -112,27 +133,32 @@ export function NewsView() {
                   className="cp-border-glow rounded-2xl bg-card p-4"
                   style={{ borderLeft: `3px solid ${imp.color}` }}
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span
                       className="rounded-md px-2 py-0.5 text-[9px] font-black tracking-wider"
                       style={{ background: `${imp.color}1a`, color: imp.color }}
                     >
                       {imp.label}
                     </span>
-                    <span className="rounded-md border border-[var(--border)] px-2 py-0.5 text-[9px] font-bold text-[var(--muted-foreground)]">{n.category}</span>
+                    <span className="rounded-md border border-[var(--border)] bg-[var(--muted)] px-2 py-0.5 text-[9px] font-bold text-[var(--muted-foreground)]">{n.category}</span>
+                    {lang === 'ru' && !isRu && (
+                      <span className="flex items-center gap-1 rounded-md bg-[var(--muted)] px-2 py-0.5 text-[9px] font-bold text-[var(--muted-foreground)]">
+                        <Loader2 className="h-2.5 w-2.5 animate-spin" /> перевод…
+                      </span>
+                    )}
                     <a
-                      href={(n as { link?: string }).link ?? '#'}
+                      href={n.link ?? '#'}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="ml-auto flex items-center gap-1 text-[10px] font-semibold transition-opacity hover:opacity-80"
                       style={{ color: 'var(--acc)' }}
                       title="Открыть источник"
                     >
-                      {timeAgo(n.time)} · {n.source} ↗
+                      {timeAgo(n.time)} · {n.source} <ExternalLink className="h-3 w-3" />
                     </a>
                   </div>
-                  <h3 className="mt-2.5 text-sm font-bold leading-snug">{n.title}</h3>
-                  <p className="mt-1.5 text-xs leading-relaxed text-[var(--muted-foreground)]">{n.summary}</p>
+                  <h3 className="mt-2.5 text-[15px] font-bold leading-snug">{titleOf(n)}</h3>
+                  <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--muted-foreground)]">{summaryOf(n)}</p>
                   {n.affects.length > 0 && (
                     <div className="mt-3 flex flex-wrap items-center gap-1.5">
                       <span className="text-[10px] text-[var(--muted-foreground)]">влияет на:</span>
@@ -148,6 +174,12 @@ export function NewsView() {
             })}
           </AnimatePresence>
         </div>
+      )}
+
+      {translating && (
+        <p className="flex items-center justify-center gap-1.5 px-1 text-center text-[10px] text-[var(--muted-foreground)]">
+          <Loader2 className="h-3 w-3 animate-spin" /> переводим свежие заголовки на русский…
+        </p>
       )}
     </div>
   )

@@ -14,11 +14,11 @@ import { useApp, THEMES, type SessionUser, type ThemeId } from '@/stores/app-sto
 import { SOUNDS, soundEngine } from '@/engines/sound'
 import { voiceEngine } from '@/engines/voice'
 import { toastError, toastSuccess } from '@/engines/notifier'
-import { AVATAR_COLORS } from '@/components/header'
+import { AVATAR_COLORS, AVATAR_STYLES, GeneratedAvatar, STYLE_LABELS, type AvatarStyle } from '@/components/avatar'
 import { cn } from '@/lib/utils'
 import type { NotifType } from '@/engines/types'
 
-const EMOJIS = ['🦊', '🐺', '🦅', '🐉', '🦈', '🐻', '🂡', '👑', '🚀', '⚡', '🔥', '💎', '🧠', '🤖', '🥷', '🎩', '🎯', '🪙', ' ETH', '🦄']
+const EMOJIS = ['🦊', '🐺', '🦅', '🐉', '🦈', '🐻', '👑', '🚀', '⚡', '🔥', '💎', '🧠', '🤖', '🥷', '🎩', '🎯', '🪙', '🦄']
 
 const SECTION = [
   { id: 'profile', label: 'Профиль', icon: <UserRound className="h-4 w-4" /> },
@@ -206,11 +206,17 @@ export function SettingsView() {
           <div className="cp-border-glow rounded-2xl bg-card p-6">
             <h3 className="flex items-center gap-2 text-sm font-bold"><UserRound className="h-4 w-4" style={{ color: 'var(--acc)' }} /> Профиль</h3>
             <div className="mt-5 flex flex-col items-center gap-4 sm:flex-row sm:items-start">
-              <div
-                className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl text-4xl"
-                style={{ background: `linear-gradient(135deg, ${AVATAR_COLORS[color] ?? '#8b5cf6'}, ${AVATAR_COLORS[color] ?? '#8b5cf6'}88)`, boxShadow: `0 10px 30px -10px ${AVATAR_COLORS[color] ?? '#8b5cf6'}` }}
-              >
-                {emoji}
+              <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl" style={{ boxShadow: `0 10px 30px -10px ${AVATAR_COLORS[color] ?? '#8b5cf6'}` }}>
+                {/^(bot|critter|orb|geo|pixel):\d+$/.test(emoji) ? (
+                  <GeneratedAvatar spec={{ style: emoji.split(':')[0] as AvatarStyle, variant: Number(emoji.split(':')[1]) }} colorKey={color} size={80} />
+                ) : (
+                  <div
+                    className="flex h-20 w-20 items-center justify-center rounded-2xl text-4xl"
+                    style={{ background: `linear-gradient(135deg, ${AVATAR_COLORS[color] ?? '#8b5cf6'}, ${AVATAR_COLORS[color] ?? '#8b5cf6'}88)` }}
+                  >
+                    {emoji}
+                  </div>
+                )}
               </div>
               <div className="w-full flex-1 space-y-4">
                 <div className="space-y-1.5">
@@ -222,13 +228,40 @@ export function SettingsView() {
                   <Input value={app.user?.email ?? ''} disabled className="opacity-60" />
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-xs text-[var(--muted-foreground)]">Аватар</Label>
+                  <Label className="text-xs text-[var(--muted-foreground)]">Аватар — сгенерированные</Label>
+                  <div className="space-y-2.5">
+                    {AVATAR_STYLES.map((style) => (
+                      <div key={style} className="flex items-center gap-2">
+                        <span className="w-20 shrink-0 text-[10px] font-bold uppercase tracking-wide text-[var(--muted-foreground)]">{STYLE_LABELS[style]}</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[0, 1, 2, 3].map((v) => {
+                            const id = `${style}:${v}`
+                            const active = emoji === id
+                            return (
+                              <button
+                                key={id}
+                                onClick={() => setEmoji(id)}
+                                className={cn('rounded-xl p-0.5 transition-transform hover:scale-110', active && 'cp-glow-sm')}
+                                style={active ? { outline: `2px solid var(--acc)`, outlineOffset: 2 } : undefined}
+                                aria-label={`Аватар ${id}`}
+                              >
+                                <GeneratedAvatar spec={{ style, variant: v }} colorKey={color} size={40} />
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs text-[var(--muted-foreground)]">Аватар — эмодзи</Label>
                   <div className="flex flex-wrap gap-1.5">
                     {EMOJIS.map((e) => (
                       <button
                         key={e}
                         onClick={() => setEmoji(e)}
-                        className={cn('flex h-9 w-9 items-center justify-center rounded-lg border text-lg transition-all hover:scale-110', emoji === e ? 'cp-glow-sm' : 'border-[var(--border)]')}
+                        className={cn('flex h-10 w-10 items-center justify-center rounded-lg border text-lg transition-all hover:scale-110', emoji === e ? 'cp-glow-sm' : 'border-[var(--border)]')}
                         style={emoji === e ? { borderColor: 'var(--acc)' } : undefined}
                         aria-label={`Аватар ${e}`}
                       >
@@ -238,7 +271,7 @@ export function SettingsView() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-xs text-[var(--muted-foreground)]">Цвет</Label>
+                  <Label className="text-xs text-[var(--muted-foreground)]">Цветовая гамма аватара</Label>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(AVATAR_COLORS).map(([k, c]) => (
                       <button
@@ -250,6 +283,7 @@ export function SettingsView() {
                       />
                     ))}
                   </div>
+                  <p className="text-[10px] text-[var(--muted-foreground)]">Цвет перекрашивает сгенерированный аватар и фон эмодзи</p>
                 </div>
               </div>
             </div>

@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { motion } from 'framer-motion'
 import {
-  Ban, Ban as BanIcon, Check, ChevronsUpDown, Coins, Layers, Loader2, Plus, Power, Search,
-  Send, Settings2, Timer, Trash2, Volume2, X,
+  Ban, Check, ChevronsUpDown, Coins, Layers, Loader2, Palette, Plus, Power, Search,
+  Send, Settings2, Timer, Hourglass, Trash2, Volume2, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,8 +18,8 @@ import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '@
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import {
-  EX_MAP, fmtPrice, fmtTime, fmtUsd,
-  type DensityEvent, type DensityWindowConfig, type ExchangeId, type MarketType, type SymbolRow,
+  EX_MAP, DEFAULT_VOL_TIERS, fmtAge, fmtPrice, fmtTime, fmtUsd, volumeTierColor,
+  type DensityEvent, type DensityWindowConfig, type ExchangeId, type MarketType, type SymbolRow, type VolumeTier,
 } from '@/engines/types'
 import { COIN_MAP } from '@/engines/coins'
 import { SOUNDS, soundEngine } from '@/engines/sound'
@@ -29,10 +29,22 @@ import { EmptyState, useUptime } from '@/components/ui-bits'
 import { cn } from '@/lib/utils'
 
 const LIFETIME_OPTIONS = [
-  { value: '10', label: '10 сек' },
-  { value: '30', label: '30 сек' },
-  { value: '60', label: '1 мин' },
-  { value: '300', label: '5 мин' },
+  { value: '10', label: 'от 10 сек' },
+  { value: '30', label: 'от 30 сек' },
+  { value: '60', label: 'от 1 мин' },
+  { value: '300', label: 'от 5 мин' },
+]
+
+/** Палитра для порогов подсветки объёма */
+const TIER_COLORS = [
+  { label: 'белый', value: '#e6eaf5' },
+  { label: 'фиолетовый', value: '#a78bfa' },
+  { label: 'зелёный', value: '#34d399' },
+  { label: 'циан', value: '#22d3ee' },
+  { label: 'янтарный', value: '#fbbf24' },
+  { label: 'розовый', value: '#f472b6' },
+  { label: 'красный', value: '#fb7185' },
+  { label: 'лайм', value: '#a3e635' },
 ]
 
 // ─── Загрузка символов биржи ─────────────────────────────────────────
@@ -219,7 +231,7 @@ function MarketSettingsColumn({ win, market }: { win: DensityWindowConfig; marke
       </div>
 
       <div className="space-y-1.5">
-        <Label className="text-[11px] font-semibold text-[var(--muted-foreground)]">Срок жизни плотности</Label>
+        <Label className="text-[11px] font-semibold text-[var(--muted-foreground)]">Возраст плотности — когда показать в окне</Label>
         <Select value={String(s.lifetimeSec)} onValueChange={(v) => set({ lifetimeSec: Number(v) })}>
           <SelectTrigger className="h-11 w-full rounded-xl bg-[var(--card)] text-sm font-bold"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -228,6 +240,9 @@ function MarketSettingsColumn({ win, market }: { win: DensityWindowConfig; marke
             ))}
           </SelectContent>
         </Select>
+        <p className="text-[10px] leading-tight text-[var(--muted-foreground)]">
+          Плотность попадёт в окно, если простоит в стакане не меньше этого времени — свежие стены отсеиваются
+        </p>
       </div>
 
       <div className="space-y-1.5">
@@ -274,6 +289,94 @@ function MarketSettingsColumn({ win, market }: { win: DensityWindowConfig; marke
   )
 }
 
+// ─── Подсветка объёма заявки по порогам ────────────────────────────
+
+function VolumeTiersSection({ win }: { win: DensityWindowConfig }) {
+  const updateDensityWindow = useApp((s) => s.updateDensityWindow)
+  const tiers = win.volTiers ?? DEFAULT_VOL_TIERS
+  const setTiers = (next: VolumeTier[]) => updateDensityWindow(win.id, { volTiers: next })
+
+  return (
+    <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--muted)_60%,transparent)] p-4">
+      <div className="flex items-center justify-between">
+        <span className="flex items-center gap-2 text-[13px] font-black uppercase tracking-wider text-[var(--foreground)]">
+          <Palette className="h-4 w-4" style={{ color: 'var(--acc)' }} />
+          Цвет объёма заявки
+        </span>
+        <Button
+          variant="outline" size="sm"
+          disabled={tiers.length >= 4}
+          onClick={() => setTiers([...tiers, { minUsd: 20e6, color: '#22d3ee' }])}
+          className="h-8 rounded-xl px-2.5 text-[11px]"
+        >
+          <Plus className="mr-1 h-3 w-3" /> порог
+        </Button>
+      </div>
+
+      <div className="space-y-2">
+        {tiers.map((t, i) => {
+          const next = tiers[i + 1]
+          const from = t.minUsd
+          const to = next?.minUsd
+          return (
+            <div key={i} className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+              <span className="shrink-0 text-[11px] font-semibold text-[var(--muted-foreground)]">от</span>
+              <div className="relative w-24">
+                <Input
+                  type="number" step={0.5} min={0} value={t.minUsd / 1e6}
+                  onChange={(e) => {
+                    const v = Math.max(0, Number(e.target.value)) * 1e6
+                    const next2 = [...tiers]
+                    next2[i] = { ...t, minUsd: v }
+                    setTiers(next2.sort((a, b) => a.minUsd - b.minUsd))
+                  }}
+                  className="cp-num h-9 rounded-lg border-[var(--border)] bg-[var(--muted)] pr-10 text-[13px] font-bold text-[var(--foreground)] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                />
+                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-black text-[var(--muted-foreground)]">$M</span>
+              </div>
+              <span className="shrink-0 text-[11px] font-semibold text-[var(--muted-foreground)]">— {to ? fmtUsd(to) : '∞'}</span>
+              <div className="ml-auto flex items-center gap-1">
+                {TIER_COLORS.map((c) => (
+                  <button
+                    key={c.value}
+                    onClick={() => {
+                      const next2 = [...tiers]
+                      next2[i] = { ...t, color: c.value }
+                      setTiers(next2)
+                    }}
+                    className={cn('h-6 w-6 rounded-md border transition-transform hover:scale-110', t.color === c.value ? 'cp-glow-sm border-white/60' : 'border-transparent')}
+                    style={{ background: c.value }}
+                    title={c.label}
+                    aria-label={`Цвет порога: ${c.label}`}
+                  />
+                ))}
+                <button
+                  onClick={() => setTiers(tiers.filter((_, j) => j !== i))}
+                  className="ml-1 flex h-6 w-6 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[color-mix(in_srgb,var(--destructive)_15%,transparent)] hover:text-[var(--destructive)]"
+                  title="Удалить порог"
+                  aria-label="Удалить порог"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+              <span
+                className="cp-num w-16 shrink-0 text-right text-xs font-black"
+                style={{ color: t.color, textShadow: `0 0 12px ${t.color}55` }}
+              >
+                {fmtUsd(from + 2e6)}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+      <p className="text-[10px] leading-relaxed text-[var(--muted-foreground)]">
+        Объём лимитной заявки подсвечивается цветом по порогам — например, до $5M обычным цветом,
+        от $5M фиолетовым, от $10M зелёным. Действует сразу для фьючерсов и спота этого окна.
+      </p>
+    </div>
+  )
+}
+
 // ─── Диалог настроек окна ─────────────────────────────────────────────
 
 function WindowSettingsDialog({ win, open, onOpenChange }: { win: DensityWindowConfig; open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -303,6 +406,7 @@ function WindowSettingsDialog({ win, open, onOpenChange }: { win: DensityWindowC
             <MarketSettingsColumn win={win} market={win.mode === 'F' ? 'f' : 's'} />
           )}
         </div>
+        <VolumeTiersSection win={win} />
         {noSpot ? (
           <p className="text-center text-[11px] text-[var(--muted-foreground)]">
             {meta.name} — биржа только с фьючерсами, спот-рынок отсутствует
@@ -556,9 +660,9 @@ function DensityWindowCard({ win, compact }: { win: DensityWindowConfig; compact
         <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: meta.color, boxShadow: `0 0 10px ${meta.color}` }} />
         <span className="truncate text-sm font-black tracking-wide">{meta.name.toUpperCase()}</span>
         <div className="flex items-center gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--muted)] p-0.5">
+          {modeBtn('ALL')}
           {modeBtn('F')}
           {modeBtn('S')}
-          {modeBtn('ALL')}
         </div>
         <span className="cp-num ml-auto rounded-md bg-[var(--muted)] px-2 py-0.5 text-[10px] font-bold" style={{ color: filtered.length > 0 ? meta.color : 'var(--muted-foreground)' }}>
           {filtered.length}
@@ -598,7 +702,7 @@ function DensityWindowCard({ win, compact }: { win: DensityWindowConfig; compact
         ) : (
           <div className="space-y-1">
             {filtered.slice(0, 12).map((e) => (
-              <DensityRow key={e.id} e={e} compact={compact} onSend={() => { setSendFor(e.symbol); setSendTargets({}) }} />
+              <DensityRow key={e.id} e={e} compact={compact} tiers={win.volTiers} onSend={() => { setSendFor(e.symbol); setSendTargets({}) }} />
             ))}
             {filtered.length > 12 && (
               <div className="py-1 text-center text-[10px] text-[var(--muted-foreground)]">+{filtered.length - 12} ещё — настройте фильтры точнее</div>
@@ -643,10 +747,11 @@ function DensityWindowCard({ win, compact }: { win: DensityWindowConfig; compact
   )
 }
 
-function DensityRow({ e, compact, onSend }: { e: DensityEvent; compact: boolean; onSend: () => void }) {
+function DensityRow({ e, compact, onSend, tiers }: { e: DensityEvent; compact: boolean; onSend: () => void; tiers: VolumeTier[] | undefined }) {
   const now = Date.now()
-  const left = Math.max(0, (e.expiresAt - now) / (e.lifetimeSec * 1000))
+  const ageMs = Math.max(0, now - e.createdAt)
   const color = EX_MAP[e.exchange].color
+  const volColor = volumeTierColor(tiers, e.volumeUsd)
   return (
     <motion.div
       layout="position"
@@ -663,7 +768,13 @@ function DensityRow({ e, compact, onSend }: { e: DensityEvent; compact: boolean;
       >
         {e.market}
       </span>
-      <span className="cp-num w-14 shrink-0 text-xs font-semibold">{fmtUsd(e.volumeUsd)}</span>
+      <span
+        className="cp-num w-16 shrink-0 text-xs font-black"
+        style={volColor ? { color: volColor, textShadow: `0 0 14px ${volColor}66` } : undefined}
+        title={`Объём заявки ${fmtUsd(e.volumeUsd)}`}
+      >
+        {fmtUsd(e.volumeUsd)}
+      </span>
       <span className="cp-num w-11 shrink-0 text-right text-xs font-bold" style={{ color: 'var(--acc)' }}>{e.strengthPct.toFixed(2)}%</span>
       <span className="cp-num hidden w-14 shrink-0 text-right text-[10px] text-[var(--muted-foreground)] lg:block" title={`Уровень ${fmtPrice(e.levelPrice)}`}>
         {fmtPrice(e.levelPrice)}
@@ -671,10 +782,13 @@ function DensityRow({ e, compact, onSend }: { e: DensityEvent; compact: boolean;
       <span className="w-12 shrink-0 text-right text-[10px] font-black" style={{ color: e.direction === 'LONG' ? 'var(--pos)' : 'var(--neg)' }}>
         {e.direction}
       </span>
-      {!compact && <span className="cp-num hidden w-11 shrink-0 text-right text-[10px] text-[var(--muted-foreground)] md:block">{fmtTime(e.createdAt)}</span>}
-      <div className="hidden h-1 w-10 shrink-0 overflow-hidden rounded-full bg-[var(--border)] md:block" title={`Осталось ${Math.ceil(left * e.lifetimeSec)}с`}>
-        <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${left * 100}%`, background: left > 0.4 ? 'var(--pos)' : 'var(--neg)' }} />
-      </div>
+      <span
+        className="cp-num flex w-[52px] shrink-0 items-center justify-center gap-1 rounded-md bg-[color-mix(in_srgb,var(--pos)_10%,transparent)] px-1 py-0.5 text-[10px] font-bold"
+        style={{ color: 'var(--pos)' }}
+        title={`Стоит с ${fmtTime(e.createdAt)} · ${new Date(e.createdAt).toLocaleTimeString('ru-RU')}`}
+      >
+        <Hourglass className="h-3 w-3" />{fmtAge(ageMs)}
+      </span>
       <button
         onClick={onSend}
         className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-transparent text-[var(--muted-foreground)] opacity-0 transition-all group-hover:opacity-100 hover:border-[color-mix(in_srgb,var(--acc)_50%,transparent)] hover:text-[var(--acc)]"

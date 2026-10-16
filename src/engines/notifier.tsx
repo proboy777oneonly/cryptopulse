@@ -51,9 +51,9 @@ function NotifToast({ n, toastId, dur }: { n: AppNotification; toastId: number |
       tabIndex={0}
       onClick={() => toast.dismiss(toastId)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toast.dismiss(toastId) }}
-      className="cp-toast group relative w-[356px] max-w-[92vw] cursor-pointer select-none overflow-hidden rounded-2xl border bg-[var(--card-solid)] shadow-2xl transition-transform hover:scale-[1.015] active:scale-[0.99]"
+      className="cp-toast group relative w-[356px] max-w-[92vw] cursor-pointer select-none overflow-hidden rounded-2xl border bg-[var(--card-solid)] shadow-2xl transition-all hover:scale-[1.015] hover:border-[color-mix(in_srgb,var(--acc)_40%,var(--border))] active:scale-[0.99]"
       style={{ borderColor: 'color-mix(in srgb, ' + sev.color + ' 30%, var(--border))', boxShadow: `0 18px 50px -18px ${sev.color}55, 0 8px 24px -12px rgba(0,0,0,0.6)` }}
-      title="Нажмите, чтобы закрыть"
+      title="Клик — закрыть · наведите курсор — таймер на паузе"
     >
       {/* левая полоса серьёзности */}
       <div className="absolute inset-y-0 left-0 w-[3px]" style={{ background: `linear-gradient(180deg, ${sev.color}, color-mix(in srgb, ${sev.color} 30%, transparent))` }} />

@@ -4,7 +4,7 @@ import type {
   ArbitrageConfig, DensityMode, DensityTickerOverride, DensityWindowConfig,
   MovementWindowConfig, NotifType,
 } from '@/engines/types'
-import { EXCHANGES, uid } from '@/engines/types'
+import { DEFAULT_VOL_TIERS, EXCHANGES, uid } from '@/engines/types'
 
 export type ThemeId = 'midnight' | 'terminal' | 'sunset' | 'crystal'
 
@@ -109,6 +109,15 @@ export function defaultDensityWindows(): DensityWindowConfig[] {
     tickers: {},
     blacklistF: [],
     blacklistS: [],
+    volTiers: DEFAULT_VOL_TIERS.map((t) => ({ ...t })),
+  }))
+}
+
+/** Старые сохранённые окна могут не иметь volTiers — накатываем дефолт */
+function withVolTiers(wins: DensityWindowConfig[]): DensityWindowConfig[] {
+  return wins.map((w) => ({
+    ...w,
+    volTiers: Array.isArray(w.volTiers) && w.volTiers.length > 0 ? w.volTiers : DEFAULT_VOL_TIERS.map((t) => ({ ...t })),
   }))
 }
 
@@ -192,6 +201,7 @@ export const useApp = create<AppState>()(
               f: { minVolume24h: 10e6, minOrderUsd: 1e6, bidDepthPct: 4, askDepthPct: 4, lifetimeSec: 30, soundId: 'ding', volumePct: 60, voice: false },
               s: { minVolume24h: 5e6, minOrderUsd: 500e3, bidDepthPct: 4, askDepthPct: 4, lifetimeSec: 30, soundId: 'ding', volumePct: 60, voice: false },
               tickers: {}, blacklistF: [], blacklistS: [],
+              volTiers: DEFAULT_VOL_TIERS.map((t) => ({ ...t })),
             },
           ],
         })
@@ -300,7 +310,9 @@ export const useApp = create<AppState>()(
           // merge дефолтов с сохранённым — новые ключи (напр. listing) появляются у старых пользователей
           soundByType: { ...d.soundByType, ...(data.soundByType as AppState['soundByType'] ?? {}) },
           typePrefs: { ...d.typePrefs, ...(data.typePrefs as AppState['typePrefs'] ?? {}) },
-          densityWindows: Array.isArray(data.densityWindows) && data.densityWindows.length > 0 ? (data.densityWindows as DensityWindowConfig[]) : d.densityWindows,
+          densityWindows: Array.isArray(data.densityWindows) && data.densityWindows.length > 0
+            ? withVolTiers(data.densityWindows as DensityWindowConfig[])
+            : d.densityWindows,
           movementWindows: Array.isArray(data.movementWindows) && data.movementWindows.length > 0 ? (data.movementWindows as MovementWindowConfig[]) : d.movementWindows,
           arbitrage: data.arbitrage ? { ...d.arbitrage, ...(data.arbitrage as ArbitrageConfig) } : d.arbitrage,
         })
@@ -324,6 +336,9 @@ export const useApp = create<AppState>()(
           ...p,
           soundByType: { ...current.soundByType, ...(p.soundByType ?? {}) },
           typePrefs: { ...current.typePrefs, ...(p.typePrefs ?? {}) },
+          densityWindows: Array.isArray(p.densityWindows) && p.densityWindows.length > 0
+            ? withVolTiers(p.densityWindows)
+            : current.densityWindows,
         }
       },
     },

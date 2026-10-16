@@ -14,11 +14,9 @@ import { toastSuccess } from '@/engines/notifier'
 import { useUptime } from '@/components/ui-bits'
 import { cn } from '@/lib/utils'
 import type { NotifType } from '@/engines/types'
+import { GeneratedAvatar, parseAvatarSpec } from '@/components/avatar'
 
-export const AVATAR_COLORS: Record<string, string> = {
-  violet: '#8b5cf6', emerald: '#10b981', amber: '#f59e0b', rose: '#f43f5e',
-  cyan: '#06b6d4', fuchsia: '#d946ef', teal: '#14b8a6', orange: '#f97316',
-}
+export { AVATAR_COLORS } from '@/components/avatar'
 
 const NOTIF_META: Record<NotifType, { label: string; color: string }> = {
   density: { label: 'Плотность', color: '#f59e0b' },
@@ -29,8 +27,27 @@ const NOTIF_META: Record<NotifType, { label: string; color: string }> = {
   system: { label: 'Система', color: '#8b5cf6' },
 }
 
+const NOTIF_SEV_COLOR: Record<string, string> = {
+  info: 'var(--acc)',
+  success: '#34d399',
+  warning: '#fbbf24',
+  critical: '#f43f5e',
+}
+
 export function UserAvatar({ emoji, color, size = 36 }: { emoji: string; color: string; size?: number }) {
-  const bg = AVATAR_COLORS[color] ?? '#8b5cf6'
+  const spec = parseAvatarSpec(emoji)
+  if (spec) {
+    return (
+      <span
+        className="cp-avatar-glow shrink-0"
+        style={{ borderRadius: Math.max(8, size * 0.3), boxShadow: `0 4px 18px -6px ${AVATAR_SHADOW[color] ?? '#8b5cf6'}` }}
+        aria-label="Аватар пользователя"
+      >
+        <GeneratedAvatar spec={spec} colorKey={color} size={size} />
+      </span>
+    )
+  }
+  const bg = AVATAR_EMOJI_BG[color] ?? '#8b5cf6'
   return (
     <div
       className="flex shrink-0 items-center justify-center rounded-xl font-bold"
@@ -40,6 +57,15 @@ export function UserAvatar({ emoji, color, size = 36 }: { emoji: string; color: 
       {emoji}
     </div>
   )
+}
+
+const AVATAR_EMOJI_BG: Record<string, string> = {
+  violet: '#8b5cf6', emerald: '#10b981', amber: '#f59e0b', rose: '#f43f5e',
+  cyan: '#06b6d4', fuchsia: '#d946ef', teal: '#14b8a6', orange: '#f97316',
+}
+const AVATAR_SHADOW: Record<string, string> = {
+  violet: '#8b5cf6aa', emerald: '#10b981aa', amber: '#f59e0baa', rose: '#f43f5eaa',
+  cyan: '#06b6d4aa', fuchsia: '#d946efaa', teal: '#14b8a6aa', orange: '#f97316aa',
 }
 
 // ─── Колокол уведомлений ──────────────────────────────────────────────
@@ -97,7 +123,7 @@ export function NotificationBell() {
           )}
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[400px] rounded-2xl border-[var(--border)] bg-[var(--popover)] p-0" style={{ boxShadow: '0 24px 60px -20px var(--glow)' }}>
+      <PopoverContent align="end" className="w-[420px] rounded-2xl border-[var(--border)] bg-[var(--popover)] p-0" style={{ boxShadow: '0 24px 60px -20px var(--glow)' }}>
         <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-bold">
             <Bell className="h-4 w-4" style={{ color: 'var(--acc)' }} /> Уведомления
@@ -116,7 +142,7 @@ export function NotificationBell() {
             <CheckCheck className="h-3.5 w-3.5" /> Прочитать все
           </button>
         </div>
-        <div className="max-h-[420px] overflow-y-auto p-2">
+        <div className="max-h-[440px] overflow-y-auto p-2">
           {recent.length === 0 && (
             <div className="py-12 text-center">
               <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--muted)]">
@@ -129,17 +155,19 @@ export function NotificationBell() {
           {recent.map((n) => {
             const meta = NOTIF_META[n.type]
             const Icon = BELL_ICONS[n.type] ?? Bell
+            const sev = NOTIF_SEV_COLOR[n.severity] ?? 'var(--acc)'
             return (
               <button
                 key={n.id}
                 onClick={() => { setOpen(false); setView(NOTIF_ROUTE[n.type] ?? 'notifications') }}
                 className={cn(
-                  'group flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-[var(--muted)]',
+                  'group relative flex w-full items-start gap-3 overflow-hidden rounded-xl px-3 py-2.5 text-left transition-all hover:bg-[var(--muted)]',
                   !n.read && 'bg-[color-mix(in_srgb,var(--acc)_7%,transparent)]',
                 )}
               >
+                <span className="absolute inset-y-1.5 left-0 w-[3px] rounded-full" style={{ background: n.read ? 'transparent' : sev, boxShadow: n.read ? undefined : `0 0 8px ${sev}` }} />
                 <span
-                  className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border"
+                  className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition-transform group-hover:scale-105"
                   style={{ background: `${meta.color}14`, borderColor: `${meta.color}30`, color: meta.color }}
                 >
                   <Icon className="h-4 w-4" strokeWidth={2.2} />
@@ -148,11 +176,12 @@ export function NotificationBell() {
                   <span className="flex items-center gap-1.5">
                     <span className="text-[9px] font-black uppercase tracking-wider" style={{ color: meta.color }}>{meta.label}</span>
                     {n.severity === 'critical' && <span className="rounded bg-[#f43f5e1a] px-1 text-[8px] font-black tracking-wider" style={{ color: '#f43f5e' }}>КРИТИЧНО</span>}
+                    {n.severity === 'warning' && <span className="rounded bg-[#fbbf241a] px-1 text-[8px] font-black tracking-wider" style={{ color: '#fbbf24' }}>ВАЖНО</span>}
                     <span className="cp-num ml-auto shrink-0 text-[10px] text-[var(--muted-foreground)]" title={new Date(n.time).toLocaleString('ru-RU')}>
                       {relTime(n.time)}
                     </span>
                   </span>
-                  <span className="mt-0.5 block truncate text-[13px] font-bold">{n.title}</span>
+                  <span className="mt-0.5 block text-[13px] font-bold leading-snug">{n.title}</span>
                   <span className="mt-0.5 block text-xs leading-snug text-[var(--muted-foreground)]">
                     <span className="line-clamp-2">{n.message}</span>
                   </span>
@@ -285,10 +314,12 @@ export function DashboardHeader({ title, subtitle }: { title: string; subtitle: 
   return (
     <header className="sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between gap-3 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--background)_82%,transparent)] px-4 backdrop-blur-xl sm:px-6">
       <div className="min-w-0">
-        <motion.h1 key={title} initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="truncate text-lg font-bold tracking-tight">
-          {title}
-        </motion.h1>
-        {subtitle && <div className="truncate text-xs text-[var(--muted-foreground)]">{subtitle}</div>}
+        {title && (
+          <motion.h1 key={title} initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="truncate text-lg font-bold tracking-tight">
+            {title}
+          </motion.h1>
+        )}
+        {title && subtitle && <div className="truncate text-xs text-[var(--muted-foreground)]">{subtitle}</div>}
       </div>
       <div className="flex items-center gap-2 sm:gap-3">
         <div className="hidden items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 py-2 sm:flex" title="Аптайм сессии движков">

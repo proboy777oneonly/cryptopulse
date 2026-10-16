@@ -5,7 +5,7 @@ import { emitNotification } from './notifier'
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import {
-  exName, fmtUsd, uid,
+  exName, fmtAge, fmtUsd, uid,
   type ConnectRow, type DensityEvent, type ExchangeId, type ListingEvent, type MarketType, type MovementAlert,
   type NewsItem, type ServiceStats, type SpreadRow, type SymbolRow, type TickerSnapshot,
 } from './types'
@@ -39,6 +39,8 @@ export interface WallRow {
   distPct: number
   vol24h: number
   ts: number
+  /** Момент появления стены в стакане */
+  firstSeen: number
 }
 
 interface HelloPayload {
@@ -50,6 +52,9 @@ interface HelloPayload {
   symbols: number
 }
 
+/** Время жизни события в окне после последнего подтверждения стены сервером */
+const WALL_EVENT_TTL_MS = 45_000
+
 interface ArbKeyState {
   symbol: string
   buyExchange: ExchangeId
@@ -57,6 +62,17 @@ interface ArbKeyState {
   spreadPct: number
   vol24h: number
   time: number
+}
+
+interface TranslateReq {
+  id: string
+  title: string
+  summary: string
+}
+interface TranslateResp {
+  id: string
+  titleRu: string
+  summaryRu: string
 }
 
 /**
@@ -76,6 +92,8 @@ export class EngineHub {
   private symbolCache = new Map<string, { rows: SymbolRow[]; at: number }>()
   private lastMoversAt = 0
   private warnedOffline = false
+  private translateInFlight = new Set<string>()
+  private newsNotified = new Set<string>()
   stats = { ticks: 0, densities: 0, movements: 0, arbitrages: 0, news: 0, errors: 0, startedAt: Date.now(), wsClients: 0 }
 
   // ─── Жизненный цикл ────────────────────────────────────────────────
@@ -124,6 +142,7 @@ export class EngineHub {
       if (d.listings?.length) useLive.setState({ listings: d.listings.slice(0, 120) })
       if (d.fg) useLive.setState({ fearGreed: { value: d.fg.value, history: d.fg.history, source: 'live' } })
       if (d.top) this.applyTop(d.top)
+      if (d.news?.length) this.translateNews()
       if (this.tickCount === 0 && d.symbols > 0) {
         emitNotification({
           type: 'system', severity: 'success',
@@ -156,6 +175,7 @@ export class EngineHub {
     this.socket = null
     this.movementCooldown.clear()
     this.arbActive.clear()
+    this.translateInFlight.clear()
     useLive.setState({ running: false })
   }
 
@@ -307,13 +327,16 @@ export class EngineHub {
   }
 
   // ── Плотности: стены с сервера → окна пользователя ────────────────
+  // Семантика lifetimeSec: стена попадает в окно, когда её возраст
+  // (now - firstSeen) достигает фильтра — «поставили плотность, она стоит
+  // 30с и не снимается — появляется в окне при фильтре от 30с».
 
   private handleWalls(rows: WallRow[]) {
     const { densityWindows } = useApp.getState()
     if (densityWindows.length === 0) return
     const now = Date.now()
     const de = { ...useLive.getState().densityEvents }
-    let anyNew = false
+    let anyChange = false
 
     for (const w of rows) {
       for (const win of densityWindows) {
@@ -332,8 +355,35 @@ export class EngineHub {
         const depth = w.side === 'BID' ? settings.bidDepthPct : settings.askDepthPct
         if (w.distPct > depth) continue
 
+        // возраст стены ещё не дотянул до фильтра — ждём следующего пульса
+        const firstSeen = w.firstSeen || w.ts
+        const ageMs = now - firstSeen
+        if (ageMs < settings.lifetimeSec * 1000) continue
+
+        const eventId = `${w.id}_${win.id}`
+        const list = de[win.id] ?? []
+        const existing = list.find((e) => e.id === eventId)
+
+        if (existing) {
+          // стена всё ещё стоит — продлеваем жизнь и обновляем объём
+          const updated: DensityEvent = {
+            ...existing,
+            volumeUsd: Math.max(existing.volumeUsd, w.notionalUsd),
+            strengthPct: w.distPct,
+            levelPrice: w.price,
+            createdAt: firstSeen,
+            expiresAt: now + WALL_EVENT_TTL_MS,
+          }
+          const idx = list.indexOf(existing)
+          const next = [...list]
+          next[idx] = updated
+          de[win.id] = next
+          anyChange = true
+          continue
+        }
+
         const event: DensityEvent = {
-          id: `${w.id}_${win.id}`,
+          id: eventId,
           windowId: win.id,
           exchange: w.ex,
           market: w.m,
@@ -343,13 +393,12 @@ export class EngineHub {
           volumeUsd: w.notionalUsd,
           strengthPct: w.distPct,
           levelPrice: w.price,
-          createdAt: w.ts,
-          expiresAt: now + settings.lifetimeSec * 1000,
+          createdAt: firstSeen,
+          expiresAt: now + WALL_EVENT_TTL_MS,
           lifetimeSec: settings.lifetimeSec,
         }
-        const list = de[win.id] ? [event, ...de[win.id]] : [event]
-        de[win.id] = list.slice(0, 60)
-        anyNew = true
+        de[win.id] = [event, ...list].slice(0, 60)
+        anyChange = true
         this.stats.densities += 1
 
         const severity = w.notionalUsd >= 20e6 ? 'critical' : w.notionalUsd >= 8e6 ? 'warning' : 'info'
@@ -357,7 +406,7 @@ export class EngineHub {
           type: 'density',
           severity,
           title: `${w.symbol} · ${fmtUsd(w.notionalUsd)} · ${event.direction}`,
-          message: `Плотность ${w.side === 'BID' ? 'покупателей' : 'продавцов'} на ${w.distPct.toFixed(2)}% от цены · ${exName(w.ex)} ${w.m === 'F' ? 'фьючерс' : 'спот'} · объём 24ч ${fmtUsd(w.vol24h)}`,
+          message: `Стоит ${fmtAge(ageMs)} · плотность ${w.side === 'BID' ? 'покупателей' : 'продавцов'} на ${w.distPct.toFixed(2)}% от цены · ${exName(w.ex)} ${w.m === 'F' ? 'фьючерс' : 'спот'} · объём 24ч ${fmtUsd(w.vol24h)}`,
           windowId: win.id,
           soundId: settings.soundId,
           volumePct: settings.volumePct,
@@ -366,7 +415,7 @@ export class EngineHub {
         })
       }
     }
-    if (anyNew) useLive.setState({ densityEvents: de })
+    if (anyChange) useLive.setState({ densityEvents: de })
   }
 
   // ── Арбитраж: спреды с сервера → фильтры пользователя ─────────────
@@ -470,17 +519,64 @@ export class EngineHub {
     this.stats.news += fresh.length
     useLive.setState({ news: unique })
 
-    for (const item of fresh) {
-      if (item.impact === 'high') {
-        emitNotification({
-          type: 'news',
-          severity: 'warning',
-          title: item.title,
-          message: `${item.category} · ${item.source}${item.affects.length > 0 ? ' · влияет на: ' + item.affects.join(', ') : ''}`,
-          voiceText: voiceTextNews(item.title),
-        })
-      }
+    // важные новости — уведомляем после перевода на RU (или по таймауту с оригиналом)
+    const high = fresh.filter((x) => x.impact === 'high')
+    for (const item of high) {
+      if (item.titleRu) { this.notifyNews(item); continue }
+      const id = item.id
+      setTimeout(() => {
+        const cur = useLive.getState().news.find((n) => n.id === id)
+        this.notifyNews(cur ?? item)
+      }, 8000)
     }
+
+    this.translateNews()
+  }
+
+  private notifyNews(item: NewsItem) {
+    if (this.newsNotified.has(item.id)) return
+    this.newsNotified.add(item.id)
+    if (this.newsNotified.size > 500) this.newsNotified.clear()
+    if (item.impact !== 'high') return
+    emitNotification({
+      type: 'news',
+      severity: 'warning',
+      title: item.titleRu ?? item.title,
+      message: `${item.category} · ${item.source}${item.affects.length > 0 ? ' · влияет на: ' + item.affects.join(', ') : ''}`,
+      voiceText: voiceTextNews(item.titleRu ?? item.title),
+    })
+  }
+
+  /** Перевод новостей на русский через LLM (батчами, с кэшем на сервере) */
+  private translateNews() {
+    const pending = useLive.getState().news
+      .filter((n) => !n.titleRu && !this.translateInFlight.has(n.id))
+      .slice(0, 24)
+      .map((n) => ({ id: n.id, title: n.title, summary: n.summary }))
+    if (pending.length === 0) return
+    for (const p of pending) this.translateInFlight.add(p.id)
+    void fetch('/api/translate-news', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: pending }),
+    })
+      .then(async (res) => {
+        if (!res.ok) return
+        const json = (await res.json()) as { items?: TranslateResp[] }
+        const byId = new Map((json.items ?? []).map((r) => [r.id, r]))
+        if (byId.size === 0) return
+        const cur = useLive.getState().news
+        useLive.setState({
+          news: cur.map((n) => {
+            const t = byId.get(n.id)
+            return t ? { ...n, titleRu: t.titleRu, summaryRu: t.summaryRu } : n
+          }),
+        })
+      })
+      .catch(() => { /* перевод недоступен — показываем оригинал */ })
+      .finally(() => {
+        for (const p of pending) this.translateInFlight.delete(p.id)
+      })
   }
 }
 

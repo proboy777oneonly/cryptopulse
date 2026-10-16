@@ -76,6 +76,29 @@ export interface DensityTickerOverride {
   note?: string
 }
 
+/** Порог подсветки объёма заявки цветом */
+export interface VolumeTier {
+  /** от этой суммы (USD) применяется цвет */
+  minUsd: number
+  color: string
+}
+
+/** Дефолт: до $5M — обычный цвет текста, от $5M — фиолетовый, от $10M — зелёный */
+export const DEFAULT_VOL_TIERS: VolumeTier[] = [
+  { minUsd: 5e6, color: '#a78bfa' },
+  { minUsd: 10e6, color: '#34d399' },
+]
+
+/** Цвет объёма по тирам; undefined — стандартный цвет темы */
+export function volumeTierColor(tiers: VolumeTier[] | undefined, volUsd: number): string | undefined {
+  if (!tiers || tiers.length === 0) return undefined
+  let color: string | undefined
+  for (const t of tiers) {
+    if (volUsd >= t.minUsd) color = t.color
+  }
+  return color
+}
+
 export interface DensityWindowConfig {
   id: string
   exchange: ExchangeId
@@ -86,6 +109,8 @@ export interface DensityWindowConfig {
   tickers: Record<string, DensityTickerOverride>
   blacklistF: string[]
   blacklistS: string[]
+  /** Пороги подсветки объёма заявки (окно, для F и S сразу) */
+  volTiers?: VolumeTier[]
 }
 
 export interface DensityEvent {
@@ -99,7 +124,9 @@ export interface DensityEvent {
   volumeUsd: number
   strengthPct: number
   levelPrice: number
+  /** Момент появления стены в стакане (возраст = now - createdAt) */
   createdAt: number
+  /** Событие живо, пока стена подтверждается сервером (+TTL) */
   expiresAt: number
   lifetimeSec: number
 }
@@ -181,11 +208,15 @@ export interface NewsItem {
   id: string
   title: string
   summary: string
+  /** Перевод на русский (LLM, появляется асинхронно) */
+  titleRu?: string
+  summaryRu?: string
   category: NewsCategory
   impact: NewsImpact
   source: string
   time: number
   affects: string[]
+  link?: string
 }
 
 // ─── Уведомления ──────────────────────────────────────────────────────
@@ -347,6 +378,16 @@ export function fmtPct(v: number): string {
 export function fmtTime(t: number): string {
   const d = new Date(t)
   return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+}
+
+/** Возраст в компактном виде: 45с / 4:12 / 1:04:05 */
+export function fmtAge(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  if (s < 60) return `${s}с`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}:${String(s % 60).padStart(2, '0')}`
+  const h = Math.floor(m / 60)
+  return `${h}:${String(m % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
 
 export function fmtTimeSec(t: number): string {

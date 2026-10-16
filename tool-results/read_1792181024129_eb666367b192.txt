@@ -1,0 +1,521 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useState, type CSSProperties } from 'react'
+     4→import { motion } from 'framer-motion'
+     5→import {
+     6→  Bell, CloudDownload, CloudUpload, Download, Mic2, Palette, RefreshCcw, Save, UserRound, Volume2,
+     7→} from 'lucide-react'
+     8→import { Button } from '@/components/ui/button'
+     9→import { Input } from '@/components/ui/input'
+    10→import { Label } from '@/components/ui/label'
+    11→import { Switch } from '@/components/ui/switch'
+    12→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    13→import { useApp, THEMES, type SessionUser, type ThemeId } from '@/stores/app-store'
+    14→import { SOUNDS, soundEngine } from '@/engines/sound'
+    15→import { voiceEngine } from '@/engines/voice'
+    16→import { toastError, toastSuccess } from '@/engines/notifier'
+    17→import { AVATAR_COLORS } from '@/components/header'
+    18→import { cn } from '@/lib/utils'
+    19→import type { NotifType } from '@/engines/types'
+    20→
+    21→const EMOJIS = ['🦊', '🐺', '🦅', '🐉', '🦈', '🐻', '🂡', '👑', '🚀', '⚡', '🔥', '💎', '🧠', '🤖', '🥷', '🎩', '🎯', '🪙', ' ETH', '🦄']
+    22→
+    23→const SECTION = [
+    24→  { id: 'profile', label: 'Профиль', icon: <UserRound className="h-4 w-4" /> },
+    25→  { id: 'appearance', label: 'Внешний вид', icon: <Palette className="h-4 w-4" /> },
+    26→  { id: 'notifications', label: 'Уведомления', icon: <Bell className="h-4 w-4" /> },
+    27→  { id: 'data', label: 'Данные', icon: <CloudUpload className="h-4 w-4" /> },
+    28→] as const
+    29→
+    30→type SectionId = (typeof SECTION)[number]['id']
+    31→
+    32→const NOTIF_TYPES: { id: NotifType; label: string; color: string }[] = [
+    33→  { id: 'density', label: 'Плотности', color: '#f59e0b' },
+    34→  { id: 'movement', label: 'Движения', color: '#10b981' },
+    35→  { id: 'arbitrage', label: 'Арбитраж', color: '#22d3ee' },
+    36→  { id: 'news', label: 'Новости', color: '#f472b6' },
+    37→  { id: 'listing', label: 'Листинг/Делистинг', color: '#a3e635' },
+    38→  { id: 'system', label: 'Система', color: '#8b5cf6' },
+    39→]
+    40→
+    41→function VolumeSlider({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+    42→  return (
+    43→    <div className="flex items-center gap-3">
+    44→      <Volume2 className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
+    45→      <input
+    46→        type="range" min={0} max={100} value={value}
+    47→        onChange={(e) => onChange(Number(e.target.value))}
+    48→        className="cp-range w-full"
+    49→        style={{ '--fill': `${value}%` } as CSSProperties}
+    50→        aria-label="Громкость"
+    51→      />
+    52→      <span className="cp-num w-12 text-right text-sm font-black" style={{ color: 'var(--acc)' }}>{value}%</span>
+    53→    </div>
+    54→  )
+    55→}
+    56→
+    57→export function SettingsView() {
+    58→  const app = useApp()
+    59→  const [section, setSection] = useState<SectionId>('profile')
+    60→
+    61→  // Профиль
+    62→  const [name, setName] = useState(app.user?.name ?? '')
+    63→  const [emoji, setEmoji] = useState(app.user?.avatarEmoji ?? '🦊')
+    64→  const [color, setColor] = useState(app.user?.avatarColor ?? 'violet')
+    65→  const [curPass, setCurPass] = useState('')
+    66→  const [newPass, setNewPass] = useState('')
+    67→  const [saving, setSaving] = useState(false)
+    68→
+    69→  // Голоса
+    70→  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
+    71→  useEffect(() => {
+    72→    voiceEngine.refreshVoices((v) => setVoices(v))
+    73→    setVoices(voiceEngine.getVoices())
+    74→  }, [])
+    75→  const ruVoices = voices.filter((v) => v.lang.toLowerCase().startsWith('ru'))
+    76→  const voiceOptions = ruVoices.length > 0 ? ruVoices : voices
+    77→
+    78→  // Импорт
+    79→  const [importText, setImportText] = useState('')
+    80→
+    81→  const saveProfile = async () => {
+    82→    setSaving(true)
+    83→    try {
+    84→      const body: Record<string, string> = { name, avatarEmoji: emoji, avatarColor: color }
+    85→      if (newPass) {
+    86→        body.currentPassword = curPass
+    87→        body.newPassword = newPass
+    88→      }
+    89→      const res = await fetch('/api/profile', {
+    90→        method: 'PATCH',
+    91→        headers: { 'Content-Type': 'application/json' },
+    92→        body: JSON.stringify(body),
+    93→      })
+    94→      const json = await res.json()
+    95→      if (!res.ok) {
+    96→        toastError('Ошибка сохранения', json.error)
+    97→        return
+    98→      }
+    99→      app.setUser(json.user as SessionUser)
+   100→      setCurPass('')
+   101→      setNewPass('')
+   102→      toastSuccess('Профиль обновлён')
+   103→    } catch {
+   104→      toastError('Сеть недоступна')
+   105→    } finally {
+   106→      setSaving(false)
+   107→    }
+   108→  }
+   109→
+   110→  const saveToServer = async () => {
+   111→    app.setSyncState('saving')
+   112→    try {
+   113→      const s = useApp.getState()
+   114→      const payload = {
+   115→        theme: s.theme, effects: s.effects, volume: s.volume, soundByType: s.soundByType,
+   116→        typePrefs: s.typePrefs, voice: s.voice, toasts: s.toasts,
+   117→        densityWindows: s.densityWindows, movementWindows: s.movementWindows, arbitrage: s.arbitrage,
+   118→      }
+   119→      const res = await fetch('/api/settings', {
+   120→        method: 'PUT',
+   121→        headers: { 'Content-Type': 'application/json' },
+   122→        body: JSON.stringify(payload),
+   123→      })
+   124→      if (!res.ok) throw new Error()
+   125→      app.setSyncState('saved', Date.now())
+   126→      toastSuccess('Настройки сохранены на сервере')
+   127→    } catch {
+   128→      app.setSyncState('error')
+   129→      toastError('Не удалось сохранить настройки')
+   130→    }
+   131→  }
+   132→
+   133→  const loadFromServer = async () => {
+   134→    try {
+   135→      const res = await fetch('/api/settings')
+   136→      const json = await res.json()
+   137→      if (res.ok && json.data) {
+   138→        app.hydrate(json.data)
+   139→        toastSuccess('Настройки загружены с сервера')
+   140→      } else if (res.ok) {
+   141→        toastError('На сервере ещё нет сохранённых настроек')
+   142→      } else {
+   143→        toastError(json.error ?? 'Ошибка загрузки')
+   144→      }
+   145→    } catch {
+   146→      toastError('Сеть недоступна')
+   147→    }
+   148→  }
+   149→
+   150→  const exportSettings = () => {
+   151→    const s = useApp.getState()
+   152→    const payload = {
+   153→      theme: s.theme, effects: s.effects, volume: s.volume, soundByType: s.soundByType,
+   154→      typePrefs: s.typePrefs, voice: s.voice, toasts: s.toasts,
+   155→      densityWindows: s.densityWindows, movementWindows: s.movementWindows, arbitrage: s.arbitrage,
+   156→    }
+   157→    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+   158→    const url = URL.createObjectURL(blob)
+   159→    const a = document.createElement('a')
+   160→    a.href = url
+   161→    a.download = `cryptopulse-settings-${new Date().toISOString().slice(0, 10)}.json`
+   162→    a.click()
+   163→    URL.revokeObjectURL(url)
+   164→    toastSuccess('Файл настроек скачан')
+   165→  }
+   166→
+   167→  const importSettings = () => {
+   168→    try {
+   169→      const data = JSON.parse(importText)
+   170→      app.hydrate(data)
+   171→      setImportText('')
+   172→      toastSuccess('Настройки импортированы')
+   173→    } catch {
+   174→      toastError('Некорректный JSON')
+   175→    }
+   176→  }
+   177→
+   178→  return (
+   179→    <div className="grid gap-4 lg:grid-cols-[220px_1fr]">
+   180→      {/* Секции */}
+   181→      <div className="cp-border-glow h-fit rounded-2xl bg-card p-3">
+   182→        <div className="flex flex-col gap-1">
+   183→          {SECTION.map((s) => (
+   184→            <button
+   185→              key={s.id}
+   186→              onClick={() => setSection(s.id)}
+   187→              className={cn(
+   188→                'flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all',
+   189→                section === s.id ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+   190→              )}
+   191→              style={section === s.id
+   192→                ? { background: 'color-mix(in srgb, var(--acc) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--acc) 35%, transparent)' }
+   193→                : { border: '1px solid transparent' }}
+   194→              aria-pressed={section === s.id}
+   195→            >
+   196→              <span style={section === s.id ? { color: 'var(--acc)' } : undefined}>{s.icon}</span>
+   197→              {s.label}
+   198→            </button>
+   199→          ))}
+   200→        </div>
+   201→      </div>
+   202→
+   203→      <motion.div key={section} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="space-y-4">
+   204→        {/* ═══ ПРОФИЛЬ ═══ */}
+   205→        {section === 'profile' && (
+   206→          <div className="cp-border-glow rounded-2xl bg-card p-6">
+   207→            <h3 className="flex items-center gap-2 text-sm font-bold"><UserRound className="h-4 w-4" style={{ color: 'var(--acc)' }} /> Профиль</h3>
+   208→            <div className="mt-5 flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+   209→              <div
+   210→                className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl text-4xl"
+   211→                style={{ background: `linear-gradient(135deg, ${AVATAR_COLORS[color] ?? '#8b5cf6'}, ${AVATAR_COLORS[color] ?? '#8b5cf6'}88)`, boxShadow: `0 10px 30px -10px ${AVATAR_COLORS[color] ?? '#8b5cf6'}` }}
+   212→              >
+   213→                {emoji}
+   214→              </div>
+   215→              <div className="w-full flex-1 space-y-4">
+   216→                <div className="space-y-1.5">
+   217→                  <Label>Имя</Label>
+   218→                  <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ваше имя" />
+   219→                </div>
+   220→                <div className="space-y-1.5">
+   221→                  <Label>Email</Label>
+   222→                  <Input value={app.user?.email ?? ''} disabled className="opacity-60" />
+   223→                </div>
+   224→                <div className="space-y-2">
+   225→                  <Label className="text-xs text-[var(--muted-foreground)]">Аватар</Label>
+   226→                  <div className="flex flex-wrap gap-1.5">
+   227→                    {EMOJIS.map((e) => (
+   228→                      <button
+   229→                        key={e}
+   230→                        onClick={() => setEmoji(e)}
+   231→                        className={cn('flex h-9 w-9 items-center justify-center rounded-lg border text-lg transition-all hover:scale-110', emoji === e ? 'cp-glow-sm' : 'border-[var(--border)]')}
+   232→                        style={emoji === e ? { borderColor: 'var(--acc)' } : undefined}
+   233→                        aria-label={`Аватар ${e}`}
+   234→                      >
+   235→                        {e}
+   236→                      </button>
+   237→                    ))}
+   238→                  </div>
+   239→                </div>
+   240→                <div className="space-y-2">
+   241→                  <Label className="text-xs text-[var(--muted-foreground)]">Цвет</Label>
+   242→                  <div className="flex flex-wrap gap-2">
+   243→                    {Object.entries(AVATAR_COLORS).map(([k, c]) => (
+   244→                      <button
+   245→                        key={k}
+   246→                        onClick={() => setColor(k)}
+   247→                        className={cn('h-8 w-8 rounded-lg transition-transform hover:scale-110', color === k && 'ring-2 ring-offset-2 ring-[var(--acc)]')}
+   248→                        style={{ background: c, ...(color === k ? { boxShadow: `0 0 14px -2px ${c}` } : {}) }}
+   249→                        aria-label={`Цвет ${k}`}
+   250→                      />
+   251→                    ))}
+   252→                  </div>
+   253→                </div>
+   254→              </div>
+   255→            </div>
+   256→
+   257→            <div className="mt-6 rounded-xl border border-[var(--border)] bg-[var(--muted)] p-4">
+   258→              <div className="text-xs font-bold">Смена пароля</div>
+   259→              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+   260→                <div className="space-y-1.5">
+   261→                  <Label className="text-[11px] text-[var(--muted-foreground)]">Текущий пароль</Label>
+   262→                  <Input type="password" value={curPass} onChange={(e) => setCurPass(e.target.value)} placeholder="••••••••" />
+   263→                </div>
+   264→                <div className="space-y-1.5">
+   265→                  <Label className="text-[11px] text-[var(--muted-foreground)]">Новый пароль</Label>
+   266→                  <Input type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="минимум 6 символов" />
+   267→                </div>
+   268→              </div>
+   269→            </div>
+   270→
+   271→            <Button className="cp-glow-sm mt-5" onClick={saveProfile} disabled={saving}>
+   272→              <Save className="mr-2 h-4 w-4" /> {saving ? 'Сохранение…' : 'Сохранить профиль'}
+   273→            </Button>
+   274→          </div>
+   275→        )}
+   276→
+   277→        {/* ═══ ВНЕШНИЙ ВИД ═══ */}
+   278→        {section === 'appearance' && (
+   279→          <div className="cp-border-glow rounded-2xl bg-card p-6">
+   280→            <h3 className="flex items-center gap-2 text-sm font-bold"><Palette className="h-4 w-4" style={{ color: 'var(--acc)' }} /> Внешний вид</h3>
+   281→            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+   282→              {THEMES.map((t) => {
+   283→                const active = app.theme === t.id
+   284→                const previews: Record<ThemeId, { bg: string; main: string; second: string }> = {
+   285→                  midnight: { bg: '#070b16', main: '#22d3ee', second: '#8b5cf6' },
+   286→                  terminal: { bg: '#030b06', main: '#34d399', second: '#a3e635' },
+   287→                  sunset: { bg: '#140a13', main: '#f472b6', second: '#fb923c' },
+   288→                  crystal: { bg: '#f2f4fa', main: '#7c3aed', second: '#0d9488' },
+   289→                }
+   290→                const p = previews[t.id]
+   291→                return (
+   292→                  <button
+   293→                    key={t.id}
+   294→                    onClick={() => { app.setTheme(t.id); toastSuccess(`Тема «${t.name}» применена`) }}
+   295→                    className={cn('overflow-hidden rounded-2xl border-2 text-left transition-all hover:-translate-y-0.5', active ? 'cp-glow' : 'border-[var(--border)]')}
+   296→                    style={{ borderColor: active ? p.main : undefined }}
+   297→                    aria-pressed={active}
+   298→                  >
+   299→                    <div className="relative h-24 overflow-hidden" style={{ background: p.bg }}>
+   300→                      <div className="absolute -left-4 -top-6 h-20 w-20 rounded-full opacity-60 blur-2xl" style={{ background: p.main }} />
+   301→                      <div className="absolute -bottom-8 -right-2 h-24 w-24 rounded-full opacity-40 blur-2xl" style={{ background: p.second }} />
+   302→                      {t.id === 'terminal' && <div className="absolute inset-0" style={{ background: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.25) 0 1px, transparent 1px 3px)' }} />}
+   303→                      <div className="absolute inset-x-4 top-4 space-y-1.5">
+   304→                        <div className="h-2 w-4/5 rounded-full" style={{ background: `${p.main}40` }} />
+   305→                        <div className="h-2 w-3/5 rounded-full" style={{ background: `${p.main}30` }} />
+   306→                        <div className="h-2 w-2/3 rounded-full" style={{ background: `${p.second}30` }} />
+   307→                      </div>
+   308→                      {active && (
+   309→                        <span className="absolute right-2 top-2 rounded-full px-2 py-0.5 text-[9px] font-black text-white" style={{ background: p.main }}>АКТИВНА</span>
+   310→                      )}
+   311→                    </div>
+   312→                    <div className="bg-[var(--card-solid)] p-3.5">
+   313→                      <div className="flex items-center justify-between">
+   314→                        <span className="text-sm font-bold">{t.name}</span>
+   315→                        <span className="text-[10px] font-bold uppercase" style={{ color: p.main }}>{t.effect}</span>
+   316→                      </div>
+   317→                      <p className="mt-1 text-xs leading-relaxed text-[var(--muted-foreground)]">{t.desc}</p>
+   318→                    </div>
+   319→                  </button>
+   320→                )
+   321→              })}
+   322→            </div>
+   323→
+   324→            <div className="mt-6 space-y-2">
+   325→              <div className="text-xs font-bold uppercase tracking-wider text-[var(--muted-foreground)]">Визуальные эффекты</div>
+   326→              {[
+   327→                { key: 'particles' as const, label: 'Частицы / аврора', hint: 'Звёзды, градиентные блобы и аврора на фоне' },
+   328→                { key: 'scanlines' as const, label: 'Сканлайны', hint: 'Эффект ЭЛТ-монитора в теме «Терминал»' },
+   329→                { key: 'glow' as const, label: 'Свечение', hint: 'Неоновые тени и подсветка границ карточек' },
+   330→                { key: 'animations' as const, label: 'Анимации', hint: 'Плавные переходы, бегущие строки и пульсация' },
+   331→                { key: 'compact' as const, label: 'Компактный режим', hint: 'Уменьшить отступы в таблицах плотностей' },
+   332→              ].map((f) => (
+   333→                <div key={f.key} className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--muted)] px-4 py-3">
+   334→                  <div>
+   335→                    <div className="text-sm font-semibold">{f.label}</div>
+   336→                    <div className="text-[11px] text-[var(--muted-foreground)]">{f.hint}</div>
+   337→                  </div>
+   338→                  <Switch checked={app.effects[f.key]} onCheckedChange={(v) => app.setEffects({ [f.key]: v })} aria-label={f.label} />
+   339→                </div>
+   340→              ))}
+   341→            </div>
+   342→          </div>
+   343→        )}
+   344→
+   345→        {/* ═══ УВЕДОМЛЕНИЯ ═══ */}
+   346→        {section === 'notifications' && (
+   347→          <div className="space-y-4">
+   348→            <div className="cp-border-glow rounded-2xl bg-card p-6">
+   349→              <h3 className="flex items-center gap-2 text-sm font-bold"><Volume2 className="h-4 w-4" style={{ color: 'var(--acc)' }} /> Звук и громкость</h3>
+   350→              <div className="mt-4">
+   351→                <div className="mb-2 flex items-center justify-between text-xs">
+   352→                  <span className="text-[var(--muted-foreground)]">Общая громкость</span>
+   353→                  <span className="text-[10px] text-[var(--muted-foreground)]">движок: {soundEngine.unlocked ? 'разблокирован' : 'ждёт клика'}</span>
+   354→                </div>
+   355→                <VolumeSlider value={app.volume} onChange={app.setVolume} />
+   356→              </div>
+   357→              <p className="mt-3 text-[11px] leading-relaxed text-[var(--muted-foreground)]">
+   358→                Браузеры блокируют автозапуск звука до первого клика — если звук не работает, кликните в любом месте страницы.
+   359→              </p>
+   360→            </div>
+   361→
+   362→            <div className="cp-border-glow rounded-2xl bg-card p-6">
+   363→              <h3 className="flex items-center gap-2 text-sm font-bold"><Mic2 className="h-4 w-4" style={{ color: 'var(--acc)' }} /> Голосовые уведомления</h3>
+   364→              <div className="mt-4 grid gap-4 md:grid-cols-2">
+   365→                <div className="space-y-1.5">
+   366→                  <Label className="text-[11px] text-[var(--muted-foreground)]">Голос озвучки</Label>
+   367→                  <Select value={app.voice.voiceURI || '__default'} onValueChange={(v) => app.setVoice({ voiceURI: v === '__default' ? '' : v })}>
+   368→                    <SelectTrigger><SelectValue /></SelectTrigger>
+   369→                    <SelectContent>
+   370→                      <SelectItem value="__default">Системный (русский)</SelectItem>
+   371→                      {voiceOptions.map((v) => (
+   372→                        <SelectItem key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang})</SelectItem>
+   373→                      ))}
+   374→                    </SelectContent>
+   375→                  </Select>
+   376→                </div>
+   377→                <div className="flex items-end">
+   378→                  <Button variant="outline" className="w-full" onClick={() => voiceEngine.test()}>
+   379→                    <Mic2 className="mr-2 h-4 w-4" /> Проверить голос
+   380→                  </Button>
+   381→                </div>
+   382→                <div className="space-y-2">
+   383→                  <div className="flex justify-between text-xs">
+   384→                    <span className="text-[var(--muted-foreground)]">Скорость речи</span>
+   385→                    <span className="cp-num font-bold" style={{ color: 'var(--acc)' }}>{app.voice.rate.toFixed(1)}x</span>
+   386→                  </div>
+   387→                  <input type="range" min={0.5} max={2} step={0.1} value={app.voice.rate} onChange={(e) => app.setVoice({ rate: Number(e.target.value) })} className="cp-range w-full" style={{ '--fill': `${((app.voice.rate - 0.5) / 1.5) * 100}%` } as CSSProperties} aria-label="Скорость речи" />
+   388→                </div>
+   389→                <div className="space-y-2">
+   390→                  <div className="flex justify-between text-xs">
+   391→                    <span className="text-[var(--muted-foreground)]">Тон голоса</span>
+   392→                    <span className="cp-num font-bold" style={{ color: 'var(--acc)' }}>{app.voice.pitch.toFixed(1)}</span>
+   393→                  </div>
+   394→                  <input type="range" min={0.5} max={2} step={0.1} value={app.voice.pitch} onChange={(e) => app.setVoice({ pitch: Number(e.target.value) })} className="cp-range w-full" style={{ '--fill': `${((app.voice.pitch - 0.5) / 1.5) * 100}%` } as CSSProperties} aria-label="Тон голоса" />
+   395→                </div>
+   396→              </div>
+   397→            </div>
+   398→
+   399→            {/* Матрица типов */}
+   400→            <div className="cp-border-glow rounded-2xl bg-card p-6">
+   401→              <h3 className="flex items-center gap-2 text-sm font-bold"><Bell className="h-4 w-4" style={{ color: 'var(--acc)' }} /> Правила по типам событий</h3>
+   402→              <div className="mt-4 space-y-2">
+   403→                <div className="grid grid-cols-[1fr_repeat(4,72px)] items-center gap-2 px-3 text-center text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
+   404→                  <span className="text-left">Тип события</span>
+   405→                  <span>Тост</span><span>Звук</span><span>Голос</span><span>Сигнал</span>
+   406→                </div>
+   407→                {NOTIF_TYPES.map((t) => {
+   408→                  const prefs = app.typePrefs[t.id]
+   409→                  return (
+   410→                    <div key={t.id} className="grid grid-cols-[1fr_repeat(4,72px)] items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 py-2.5">
+   411→                      <span className="flex items-center gap-2 text-sm font-bold">
+   412→                        <span className="h-2 w-2 rounded-full" style={{ background: t.color, boxShadow: `0 0 8px ${t.color}` }} />
+   413→                        {t.label}
+   414→                      </span>
+   415→                      <div className="flex justify-center"><Switch checked={prefs.toast} onCheckedChange={(v) => app.setTypePrefs(t.id, { toast: v })} aria-label={`Тосты для ${t.label}`} /></div>
+   416→                      <div className="flex justify-center"><Switch checked={prefs.sound} onCheckedChange={(v) => app.setTypePrefs(t.id, { sound: v })} aria-label={`Звук для ${t.label}`} /></div>
+   417→                      <div className="flex justify-center"><Switch checked={prefs.voice} onCheckedChange={(v) => app.setTypePrefs(t.id, { voice: v })} aria-label={`Голос для ${t.label}`} /></div>
+   418→                      <div className="flex justify-center">
+   419→                        <Select value={app.soundByType[t.id]} onValueChange={(v) => app.setSoundForType(t.id, v)}>
+   420→                          <SelectTrigger className="h-8 w-[68px] text-[10px]"><SelectValue /></SelectTrigger>
+   421→                          <SelectContent>
+   422→                            {SOUNDS.map((s) => (
+   423→                              <SelectItem key={s.id} value={s.id} className="text-xs">{s.name}</SelectItem>
+   424→                            ))}
+   425→                          </SelectContent>
+   426→                        </Select>
+   427→                      </div>
+   428→                    </div>
+   429→                  )
+   430→                })}
+   431→              </div>
+   432→            </div>
+   433→
+   434→            {/* Тосты */}
+   435→            <div className="cp-border-glow rounded-2xl bg-card p-6">
+   436→              <h3 className="text-sm font-bold">Поведение тостов</h3>
+   437→              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+   438→                <div className="space-y-1.5">
+   439→                  <Label className="text-[11px] text-[var(--muted-foreground)]">Позиция на экране</Label>
+   440→                  <Select value={app.toasts.position} onValueChange={(v) => app.setToasts({ position: v as typeof app.toasts.position })}>
+   441→                    <SelectTrigger><SelectValue /></SelectTrigger>
+   442→                    <SelectContent>
+   443→                      <SelectItem value="top-right">Сверху справа</SelectItem>
+   444→                      <SelectItem value="top-center">Сверху по центру</SelectItem>
+   445→                      <SelectItem value="bottom-right">Снизу справа</SelectItem>
+   446→                      <SelectItem value="bottom-center">Снизу по центру</SelectItem>
+   447→                    </SelectContent>
+   448→                  </Select>
+   449→                </div>
+   450→                <div className="space-y-2">
+   451→                  <div className="flex justify-between text-xs">
+   452→                    <span className="text-[var(--muted-foreground)]">Длительность показа</span>
+   453→                    <span className="cp-num font-bold" style={{ color: 'var(--acc)' }}>{app.toasts.duration} сек</span>
+   454→                  </div>
+   455→                  <input type="range" min={2} max={15} value={app.toasts.duration} onChange={(e) => app.setToasts({ duration: Number(e.target.value) })} className="cp-range w-full" style={{ '--fill': `${((app.toasts.duration - 2) / 13) * 100}%` } as CSSProperties} aria-label="Длительность тостов" />
+   456→                </div>
+   457→              </div>
+   458→            </div>
+   459→          </div>
+   460→        )}
+   461→
+   462→        {/* ═══ ДАННЫЕ ═══ */}
+   463→        {section === 'data' && (
+   464→          <div className="space-y-4">
+   465→            <div className="cp-border-glow rounded-2xl bg-card p-6">
+   466→              <h3 className="flex items-center gap-2 text-sm font-bold"><CloudUpload className="h-4 w-4" style={{ color: 'var(--acc)' }} /> Синхронизация с сервером</h3>
+   467→              <p className="mt-2 text-xs leading-relaxed text-[var(--muted-foreground)]">
+   468→                Настройки автоматически сохраняются на сервер при каждом изменении (с задержкой 2 секунды).
+   469→                Последняя синхронизация: {app.lastSyncedAt ? new Date(app.lastSyncedAt).toLocaleTimeString('ru-RU') : 'ещё не было'} · статус: {
+   470→                  { idle: 'ожидание', saving: 'сохранение…', saved: 'сохранено', error: 'ошибка' }[app.syncState]
+   471→                }
+   472→              </p>
+   473→              <div className="mt-4 flex flex-wrap gap-2">
+   474→                <Button onClick={saveToServer}><CloudUpload className="mr-2 h-4 w-4" /> Сохранить на сервер</Button>
+   475→                <Button variant="outline" onClick={loadFromServer}><CloudDownload className="mr-2 h-4 w-4" /> Загрузить с сервера</Button>
+   476→              </div>
+   477→            </div>
+   478→
+   479→            <div className="cp-border-glow rounded-2xl bg-card p-6">
+   480→              <h3 className="flex items-center gap-2 text-sm font-bold"><Download className="h-4 w-4" style={{ color: 'var(--acc)' }} /> Экспорт и импорт</h3>
+   481→              <div className="mt-4 flex flex-wrap gap-2">
+   482→                <Button variant="outline" onClick={exportSettings}><Download className="mr-2 h-4 w-4" /> Скачать JSON</Button>
+   483→              </div>
+   484→              <div className="mt-4 space-y-2">
+   485→                <Label className="text-[11px] text-[var(--muted-foreground)]">Импорт из JSON</Label>
+   486→                <textarea
+   487→                  value={importText}
+   488→                  onChange={(e) => setImportText(e.target.value)}
+   489→                  placeholder='{"theme": "terminal", "volume": 80, ...}'
+   490→                  className="min-h-[90px] w-full rounded-xl border border-[var(--input)] bg-[var(--muted)] p-3 font-mono text-xs outline-none focus:border-[color-mix(in_srgb,var(--acc)_50%,transparent)]"
+   491→                />
+   492→                <Button size="sm" variant="outline" disabled={!importText.trim()} onClick={importSettings}>
+   493→                  <RefreshCcw className="mr-2 h-3.5 w-3.5" /> Импортировать
+   494→                </Button>
+   495→              </div>
+   496→            </div>
+   497→
+   498→            <div className="rounded-2xl border border-[color-mix(in_srgb,var(--destructive)_35%,transparent)] bg-[color-mix(in_srgb,var(--destructive)_6%,transparent)] p-6">
+   499→              <h3 className="text-sm font-bold text-[var(--destructive)]">Сброс настроек</h3>
+   500→              <p className="mt-2 text-xs leading-relaxed text-[var(--muted-foreground)]">
+   501→                Вернуть все окна, фильтры, темы и звуки к значениям по умолчанию. Действие необратимо.
+   502→              </p>
+   503→              <Button
+   504→                variant="outline" className="mt-4 border-[var(--destructive)] text-[var(--destructive)] hover:bg-[color-mix(in_srgb,var(--destructive)_12%,transparent)]"
+   505→                onClick={() => {
+   506→                  if (window.confirm('Сбросить ВСЕ настройки к значениям по умолчанию?')) {
+   507→                    app.resetAll()
+   508→                    toastSuccess('Настройки сброшены к дефолтным')
+   509→                  }
+   510→                }}
+   511→              >
+   512→                Сбросить всё
+   513→              </Button>
+   514→            </div>
+   515→          </div>
+   516→        )}
+   517→      </motion.div>
+   518→    </div>
+   519→  )
+   520→}
+   521→
