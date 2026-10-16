@@ -91,10 +91,23 @@ SQLite живёт в `db/custom.db` (путь — в `.env`, `DATABASE_URL`).
 
 - [ ] `.env`: `SESSION_SECRET` сгенерирован (setup-vps.sh делает это сам)
 - [ ] Пароль админа сменён/задан свой (`ADMIN_PASSWORD` в `.env`)
-- [ ] Домен указывает на IP VPS, HTTPS выпущен (замок в браузере)
+- [ ] Домен указывает на IP VPS, HTTPS выпустится (замок в браузере)
 - [ ] `systemctl is-enabled cryptopulse` → `enabled`
 - [ ] Открывается `http://<домен>/`, логин работает, вкладки живые
 - [ ] Порты 3000/3003 закрыты снаружи (доступ только через Caddy)
+
+## Безопасность репозитория
+
+`.env` и `db/custom.db` в `.gitignore` и не отслеживаются. Если репозиторий
+раньше коммитился с этими файлами и будет публиковаться — либо начните
+чистую историю (`rm -rf .git && git init && git add -A && git commit -m init`),
+либо переносите проект на VPS через `rsync` (история не участвует):
+
+```bash
+rsync -av --exclude node_modules --exclude .next --exclude .git \
+      --exclude 'scripts/logs' --exclude 'download' \
+      ./ user@vps:/opt/cryptopulse
+```
 
 ## Ручной вариант (без setup-скрипта)
 

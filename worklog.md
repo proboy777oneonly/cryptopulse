@@ -238,3 +238,26 @@ Work Log:
 
 Stage Summary:
 - v3.5.0 готова и работает в production-режиме: чистый терминальный Обзор рынка, линейка с крупным %, улучшенный канвас, новый дизайн входа, самовосстанавливающаяся инфраструктура (watchdog + guards), сборка и DEPLOY.md для переноса. Админ: admin@screen.io / admin123. Сервисы: :3000 (prod), :3003 (v3.5.0), Caddy :81, watchdog активен
+---
+Task ID: 19
+Agent: main
+Task: v3.6.0 — полная переделка главной страницы, удаление демо-входа, подготовка к загрузке на VPS
+
+Work Log:
+- Главная страница переписана с нуля (landing.tsx): hero «Рынок движется. Вы узнаете первым.» + ЖИВОЙ ТЕРМИНАЛ сигналов справа (окно с мак-кнопками, статус-чип «WS 8/8», поток строк ПЛОТНОСТЬ/ДВИЖЕНИЕ/АРБИТРАЖ с тикером/биржей/F-S/значением/временем — новая запись каждые 1.7с через AnimatePresence, счётчик событий внизу); 4 стат-карточки (8 бирж / 400+ монет / <1с / 24/7); бегущая строка; ВОЗМОЖНОСТИ как bento-сетка 12 колонок: Плотности (7 кол, строки-бары с анимацией ширины), Движения (5 кол, sparkline TURBO с pathLength-анимацией), Арбитраж (чип GATE→KUCOIN со спредом), Новости и листинги, Голосовые алерты (эквалайзер из 12 анимированных полос), Обзор рынка (SVG-свечи + чипы), стек Уведомления/Монитор/Аккаунты; биржи — 8 карточек с pulse-точками; темы (4 интерактивных превью с live-переключением); «Как работает» — 3 шага с градиентной линией-коннектором; CTA с чипом «пока вы читаете это — терминал уже поймал несколько плотностей»; футер v3.6.0
+- Демо-вход удалён полностью: landing.tsx (кнопки hero + CTA, пропсы onDemo/demoLoading), auth-view.tsx (блок «Демо-доступ: admin@screen.io/admin123» + функция demoLogin), app.tsx (хендлер onDemo, state demoLoading, импорт) — вход только по своим кредитам
+- VPS-подготовка:
+  * scripts/seed.ts — кредиты админа из ADMIN_EMAIL/ADMIN_PASSWORD (.env), без пароля генерируется случайный читаемый (orbit-delta-N) и печатается один раз; идемпотентен
+  * .env.example — расширен (SESSION_SECRET, DATABASE_URL с комментарием, ADMIN_EMAIL/ADMIN_PASSWORD, PORT)
+  * deploy/setup-vps.sh — бутстрап VPS одним запуском (Ubuntu/Debian): системные пакеты, Bun системно в /usr/local/bin, Caddy из официального репо, bun install (корень+market-service), генерация .env (openssl-секрет, права 600, абсолютный DATABASE_URL), prisma db push + generate, seed, bun run build, systemd-юнит с автостартом, Caddy-сайт (домен с авто-HTTPS / :80 по IP), ufw-порты; идемпотентен; аргумент — домен
+  * deploy/cryptopulse.service — systemd: ExecStartPre=start-all.sh --prod --no-watchdog, ExecStart=watchdog.sh, Restart=always (двухуровневая защита: systemd следит за watchdog, watchdog за сервисами)
+  * deploy/Caddyfile.production — домен + Let's Encrypt + gzip/zstd + кэш статики + XTransformPort-роутинг socket.io
+  * scripts/start-all.sh — новый флаг --no-watchdog (для systemd-режима, чтобы не плодить второй watchdog)
+  * DEPLOY.md переписан: требования (1vCPU/2ГБ + swap-подсказка), установка одним скриптом, обновление, управление, бэкап БД, чек-лист, секция безопасности репозитория (чистая история или rsync), ручной вариант
+- Безопасность git: .env и db/custom.db УБРАНЫ из индекса (git rm --cached) и добавлены в .gitignore (+!.env.example); починена склейка правил в .gitignore (строка без \n склеилась с db/*.db); проверено: 0 чувствительных файлов в git ls-files
+- Версия v3.6.0: сайдбар dashboard.tsx, футер лендинга
+- E2E (production standalone через Caddy :81): tsc src 0, eslint 0, build 39с/0 ошибок; watchdog-рестарт next с новой сборкой (:3000 200 за ~15с); лендинг: VLM-проверки hero/бенто/тем — «дефектов нет», демо-кнопок нет (DOM+VLM), терминал живой (строки меняются за 4с: TURBO$7.70M→TIA$12.9M), hscroll=false на 390px и 1366px; вход admin OK (сессия, все вкладки), РЕГИСТРАЦИЯ нового пользователя OK (автовход + тост), тест-юзер удалён; seed: идемпотентен, env-режим проверен (envtest@screen.io создан из ADMIN_PASSWORD и удалён); smoke «Обзор рынка»: canvas 1920x1080, ошибок консоли 0; start-all.sh --prod --no-watchdog — корректно пропускает watchdog
+- Коммит: f80f79c v3.6.0 + фикс gitignore
+
+Stage Summary:
+- v3.6.0: главная страница полностью новая (живой терминал сигналов + bento), демо-вход удалён отовсюду, проект готов к загрузке на VPS одним скриптом deploy/setup-vps.sh (Bun+Caddy+systemd+авто-HTTPS+env-кредиты). Секреты и БД убраны из git. Админ: admin@screen.io / admin123 (на VPS — задаётся через .env или генерируется). Сервисы: :3000 (prod v3.6.0), :3003 (v3.5.0), Caddy :81, watchdog активен
