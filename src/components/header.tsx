@@ -3,12 +3,12 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import {
-  Bell, CheckCheck, ChevronDown, Clock, LogOut, Mail, Radar, Settings as SettingsIcon, ShieldCheck, Trash2, UserRound,
+  Activity, ArrowUpDown, Bell, CheckCheck, ChevronDown, Clock, Layers, ListPlus, LogOut, Mail, Newspaper, Radar, Settings as SettingsIcon, ShieldCheck, Trash2, TrendingUp, UserRound,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { useApp } from '@/stores/app-store'
+import { useApp, type ViewId } from '@/stores/app-store'
 import { clearNotifications, markAllRead, resetLive, useLive } from '@/stores/live-store'
 import { toastSuccess } from '@/engines/notifier'
 import { useUptime } from '@/components/ui-bits'
@@ -25,6 +25,7 @@ const NOTIF_META: Record<NotifType, { label: string; color: string }> = {
   movement: { label: 'Движение', color: '#10b981' },
   arbitrage: { label: 'Арбитраж', color: '#22d3ee' },
   news: { label: 'Новость', color: '#f472b6' },
+  listing: { label: 'Листинг', color: '#a3e635' },
   system: { label: 'Система', color: '#8b5cf6' },
 }
 
@@ -43,12 +44,39 @@ export function UserAvatar({ emoji, color, size = 36 }: { emoji: string; color: 
 
 // ─── Колокол уведомлений ──────────────────────────────────────────────
 
+const NOTIF_ROUTE: Record<NotifType, ViewId> = {
+  density: 'densities',
+  movement: 'movements',
+  arbitrage: 'arbitrage',
+  news: 'news',
+  listing: 'listings',
+  system: 'notifications',
+}
+
+const BELL_ICONS: Record<NotifType, typeof Bell> = {
+  density: Layers,
+  movement: TrendingUp,
+  arbitrage: ArrowUpDown,
+  news: Newspaper,
+  listing: ListPlus,
+  system: Activity,
+}
+
+function relTime(t: number): string {
+  const diff = Math.floor((Date.now() - t) / 1000)
+  if (diff < 60) return 'только что'
+  if (diff < 3600) return `${Math.floor(diff / 60)} мин`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} ч`
+  return `${Math.floor(diff / 86400)} дн`
+}
+
 export function NotificationBell() {
   const [open, setOpen] = useState(false)
   const notifications = useLive((s) => s.notifications)
   const unread = useLive((s) => s.unread)
   const setView = useApp((s) => s.setView)
   const recent = notifications.slice(0, 8)
+  const criticalCount = notifications.filter((n) => n.severity === 'critical').length
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -69,44 +97,67 @@ export function NotificationBell() {
           )}
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[380px] rounded-2xl border-[var(--border)] bg-[var(--popover)] p-0" style={{ boxShadow: '0 24px 60px -20px var(--glow)' }}>
+      <PopoverContent align="end" className="w-[400px] rounded-2xl border-[var(--border)] bg-[var(--popover)] p-0" style={{ boxShadow: '0 24px 60px -20px var(--glow)' }}>
         <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-bold">
             <Bell className="h-4 w-4" style={{ color: 'var(--acc)' }} /> Уведомления
-            {unread > 0 && <span className="cp-num rounded-full px-2 py-0.5 text-[10px] font-black text-white" style={{ background: 'var(--acc)' }}>{unread}</span>}
+            {unread > 0 && (
+              <span className="cp-num rounded-full px-2 py-0.5 text-[10px] font-black text-white" style={{ background: 'linear-gradient(135deg, var(--acc), var(--acc-2))' }}>
+                {unread} новых
+              </span>
+            )}
+            {criticalCount > 0 && (
+              <span className="cp-num rounded-full px-2 py-0.5 text-[10px] font-black" style={{ background: 'rgba(244,63,94,0.14)', color: '#f43f5e' }}>
+                {criticalCount} критичных
+              </span>
+            )}
           </div>
           <button onClick={markAllRead} className="flex items-center gap-1 text-[11px] font-medium text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]">
             <CheckCheck className="h-3.5 w-3.5" /> Прочитать все
           </button>
         </div>
-        <div className="max-h-[380px] overflow-y-auto p-2">
+        <div className="max-h-[420px] overflow-y-auto p-2">
           {recent.length === 0 && (
-            <div className="py-10 text-center text-sm text-[var(--muted-foreground)]">
-              <Bell className="mx-auto mb-2 h-8 w-8 opacity-30" />
-              Пока пусто — сигналы появятся здесь
+            <div className="py-12 text-center">
+              <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--muted)]">
+                <Bell className="h-6 w-6 opacity-30" />
+              </div>
+              <div className="text-sm font-semibold">Пока пусто</div>
+              <div className="mt-1 text-xs text-[var(--muted-foreground)]">Сигналы плотностей, движений и арбитража появятся здесь</div>
             </div>
           )}
           {recent.map((n) => {
             const meta = NOTIF_META[n.type]
+            const Icon = BELL_ICONS[n.type] ?? Bell
             return (
               <button
                 key={n.id}
-                onClick={() => setView('notifications')}
+                onClick={() => { setOpen(false); setView(NOTIF_ROUTE[n.type] ?? 'notifications') }}
                 className={cn(
-                  'flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-[var(--muted)]',
+                  'group flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-[var(--muted)]',
                   !n.read && 'bg-[color-mix(in_srgb,var(--acc)_7%,transparent)]',
                 )}
               >
-                <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: meta.color, boxShadow: `0 0 8px ${meta.color}` }} />
+                <span
+                  className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border"
+                  style={{ background: `${meta.color}14`, borderColor: `${meta.color}30`, color: meta.color }}
+                >
+                  <Icon className="h-4 w-4" strokeWidth={2.2} />
+                </span>
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-baseline justify-between gap-2">
-                    <span className="truncate text-[13px] font-semibold">{n.title}</span>
-                    <span className="cp-num shrink-0 text-[10px] text-[var(--muted-foreground)]">
-                      {new Date(n.time).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[9px] font-black uppercase tracking-wider" style={{ color: meta.color }}>{meta.label}</span>
+                    {n.severity === 'critical' && <span className="rounded bg-[#f43f5e1a] px-1 text-[8px] font-black tracking-wider" style={{ color: '#f43f5e' }}>КРИТИЧНО</span>}
+                    <span className="cp-num ml-auto shrink-0 text-[10px] text-[var(--muted-foreground)]" title={new Date(n.time).toLocaleString('ru-RU')}>
+                      {relTime(n.time)}
                     </span>
                   </span>
-                  <span className="mt-0.5 block truncate text-xs text-[var(--muted-foreground)]">{n.message}</span>
+                  <span className="mt-0.5 block truncate text-[13px] font-bold">{n.title}</span>
+                  <span className="mt-0.5 block text-xs leading-snug text-[var(--muted-foreground)]">
+                    <span className="line-clamp-2">{n.message}</span>
+                  </span>
                 </span>
+                {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--acc)', boxShadow: '0 0 8px var(--acc)' }} />}
               </button>
             )
           })}
@@ -118,7 +169,7 @@ export function NotificationBell() {
           >
             <Trash2 className="h-3.5 w-3.5" /> Очистить
           </button>
-          <button onClick={() => { setOpen(false); setView('notifications') }} className="text-xs font-semibold" style={{ color: 'var(--acc)' }}>
+          <button onClick={() => { setOpen(false); setView('notifications') }} className="flex items-center gap-1 text-xs font-semibold transition-opacity hover:opacity-80" style={{ color: 'var(--acc)' }}>
             Открыть журнал →
           </button>
         </div>

@@ -239,10 +239,11 @@ export class TickerHub {
     let i = 0
     for (const p of this.pollers) {
       if (!p.def) continue // BINANCE — через WS
+      const pollerDef = p.def
       const run = async () => {
         try {
           const t0 = Date.now()
-          const raw = await p.def.fetchRows()
+          const raw = await pollerDef.fetchRows()
           p.latencyMs = Date.now() - t0
           this.feed(p, raw, false)
           p.lastOk = Date.now()
@@ -256,7 +257,7 @@ export class TickerHub {
           console.error(`[${p.id}] poll error:`, (e as Error).message)
         }
         const backoff = p.errStreak > 4 ? 2.5 : 1
-        setTimeout(run, p.def.intervalMs * backoff + Math.random() * 400)
+        setTimeout(run, pollerDef.intervalMs * backoff + Math.random() * 400)
       }
       setTimeout(run, 300 + i * 250)
       i += 1
@@ -395,6 +396,19 @@ export class TickerHub {
     let n = 0
     for (const p of this.pollers) n += p.rows.size
     return n
+  }
+
+  /** Текущее множество символов комбинации (для диффа листингов) */
+  snapshotSymbols(ex: Ex, m: Mkt): string[] {
+    const p = this.pollers.find((x) => x.combo.ex === ex && x.combo.m === m)
+    if (!p) return []
+    return [...p.rows.values()].map((t) => t.symbol)
+  }
+
+  /** Объём 24ч конкретного символа (0 если нет) */
+  symbolVol(ex: Ex, m: Mkt, symbol: string): number {
+    const p = this.pollers.find((x) => x.combo.ex === ex && x.combo.m === m)
+    return p?.rows.get(`${ex}:${m}:${symbol}`)?.vol24h ?? 0
   }
 }
 

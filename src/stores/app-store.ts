@@ -48,7 +48,7 @@ export interface EffectsPrefs {
   compact: boolean
 }
 
-export type ViewId = 'home' | 'densities' | 'arbitrage' | 'movements' | 'news' | 'notifications' | 'monitor' | 'users' | 'settings'
+export type ViewId = 'home' | 'densities' | 'arbitrage' | 'movements' | 'news' | 'listings' | 'notifications' | 'monitor' | 'users' | 'settings'
 
 export interface AppState {
   user: SessionUser | null
@@ -143,16 +143,17 @@ export function defaultState() {
     theme: 'midnight' as ThemeId,
     effects: { particles: true, scanlines: true, glow: true, animations: true, compact: false },
     volume: 60,
-    soundByType: { density: 'ding', movement: 'alert', arbitrage: 'blip', news: 'chord', system: 'power' },
+    soundByType: { density: 'ding', movement: 'alert', arbitrage: 'blip', news: 'chord', listing: 'bell', system: 'power' },
     typePrefs: {
       density: { toast: true, sound: true, voice: false },
       movement: { toast: true, sound: true, voice: true },
       arbitrage: { toast: true, sound: false, voice: false },
       news: { toast: true, sound: false, voice: false },
+      listing: { toast: true, sound: true, voice: false },
       system: { toast: true, sound: true, voice: false },
     },
     voice: { voiceURI: '', rate: 1.05, pitch: 1, volume: 0.9 },
-    toasts: { position: 'top-right', duration: 5 },
+    toasts: { position: 'top-right' as const, duration: 5 },
     densityWindows: defaultDensityWindows(),
     movementWindows: [defaultMovementWindow()],
     arbitrage: defaultArbitrage(),
@@ -296,6 +297,9 @@ export const useApp = create<AppState>()(
           user: get().user,
           syncState: get().syncState,
           lastSyncedAt: get().lastSyncedAt,
+          // merge дефолтов с сохранённым — новые ключи (напр. listing) появляются у старых пользователей
+          soundByType: { ...d.soundByType, ...(data.soundByType as AppState['soundByType'] ?? {}) },
+          typePrefs: { ...d.typePrefs, ...(data.typePrefs as AppState['typePrefs'] ?? {}) },
           densityWindows: Array.isArray(data.densityWindows) && data.densityWindows.length > 0 ? (data.densityWindows as DensityWindowConfig[]) : d.densityWindows,
           movementWindows: Array.isArray(data.movementWindows) && data.movementWindows.length > 0 ? (data.movementWindows as MovementWindowConfig[]) : d.movementWindows,
           arbitrage: data.arbitrage ? { ...d.arbitrage, ...(data.arbitrage as ArbitrageConfig) } : d.arbitrage,
@@ -310,6 +314,17 @@ export const useApp = create<AppState>()(
         const { user, syncState, lastSyncedAt, ...rest } = s
         void user; void syncState; void lastSyncedAt
         return { ...rest, view: 'home' } as unknown as AppState
+      },
+      // deep-merge дефолтов уведомлений — чтобы новые типы (напр. listing)
+      // появлялись у пользователей со старым localStorage
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<AppState>
+        return {
+          ...current,
+          ...p,
+          soundByType: { ...current.soundByType, ...(p.soundByType ?? {}) },
+          typePrefs: { ...current.typePrefs, ...(p.typePrefs ?? {}) },
+        }
       },
     },
   ),

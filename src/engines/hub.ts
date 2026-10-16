@@ -6,7 +6,7 @@ import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import {
   exName, fmtUsd, uid,
-  type ConnectRow, type DensityEvent, type ExchangeId, type MarketType, type MovementAlert,
+  type ConnectRow, type DensityEvent, type ExchangeId, type ListingEvent, type MarketType, type MovementAlert,
   type NewsItem, type ServiceStats, type SpreadRow, type SymbolRow, type TickerSnapshot,
 } from './types'
 import { voiceTextArbitrage, voiceTextDensity, voiceTextMovement, voiceTextNews } from './voice'
@@ -45,6 +45,7 @@ interface HelloPayload {
   service: { version: string; startedAt: number }
   fg: { value: number; history: number[]; source: 'live' } | null
   news: NewsItem[]
+  listings?: ListingEvent[]
   top: { gainers: MoverRow[]; losers: MoverRow[] }
   symbols: number
 }
@@ -120,6 +121,7 @@ export class EngineHub {
 
     socket.on('hello', (d: HelloPayload) => {
       if (d.news?.length) useLive.setState({ news: d.news })
+      if (d.listings?.length) useLive.setState({ listings: d.listings.slice(0, 120) })
       if (d.fg) useLive.setState({ fearGreed: { value: d.fg.value, history: d.fg.history, source: 'live' } })
       if (d.top) this.applyTop(d.top)
       if (this.tickCount === 0 && d.symbols > 0) {
@@ -139,6 +141,7 @@ export class EngineHub {
       useLive.setState({ fearGreed: { value: d.value, history: d.history, source: 'live' } })
     })
     socket.on('news', (fresh: NewsItem[]) => this.handleNews(fresh))
+    socket.on('listings:new', (fresh: ListingEvent[]) => this.handleListings(fresh))
     socket.on('connects', (rows: ConnectRow[]) => useLive.setState({ connects: rows }))
     socket.on('stats', (d: ServiceStats) => useLive.setState({ serviceStats: d }))
 
@@ -426,6 +429,34 @@ export class EngineHub {
       }))
 
     useLive.setState({ arbitrageOpps: opps })
+  }
+
+  // ── Листинг/делистинг ────────────────────────────────────────────
+
+  private handleListings(fresh: ListingEvent[]) {
+    if (!Array.isArray(fresh) || fresh.length === 0) return
+    const known = new Set(useLive.getState().listings.map((l) => l.id))
+    const add = fresh.filter((l) => l && l.id && !known.has(l.id))
+    if (add.length === 0) return
+    const merged = [...add, ...useLive.getState().listings]
+      .sort((a, b) => b.time - a.time)
+      .slice(0, 120)
+    useLive.setState({ listings: merged })
+
+    for (const l of add.slice(0, 4)) {
+      const isDelist = l.kind === 'delisting'
+      const syms = (l.symbols ?? []).filter((s) => s && s !== 'USDT')
+      const symStr = syms.length > 0 ? syms.slice(0, 3).join(', ') + (syms.length > 3 ? '…' : '') : ''
+      emitNotification({
+        type: 'listing',
+        severity: isDelist ? 'warning' : 'success',
+        title: symStr ? `${isDelist ? 'Делистинг' : 'Листинг'} · ${symStr} · ${exName(l.exchange)} ${l.market === 'F' ? 'фьючерс' : 'спот'}` : `${isDelist ? 'Делистинг' : 'Листинг'} · ${exName(l.exchange)}`,
+        message: l.source === 'live' ? 'Символ замечен в торгах на бирже' : l.title,
+        voiceText: symStr
+          ? `${isDelist ? 'Делистинг' : 'Листинг'} ${syms[0].replace('USDT', '')} на ${l.exchange === 'BINANCE' ? 'Байнанс' : l.exchange === 'BYBIT' ? 'Байбит' : 'ОК Икс'}`
+          : undefined,
+      })
+    }
   }
 
   // ── Новости ────────────────────────────────────────────────────────

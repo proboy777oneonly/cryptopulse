@@ -1,7 +1,7 @@
 'use client'
 
 import { toast } from 'sonner'
-import { Activity, ArrowRight, ArrowUpDown, Layers, Newspaper, TrendingUp, X } from 'lucide-react'
+import { Activity, ArrowRight, ArrowUpDown, Layers, ListPlus, Newspaper, TrendingUp, X } from 'lucide-react'
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import { soundEngine } from './sound'
@@ -33,6 +33,7 @@ const TYPE_META: Record<NotifType, { label: string; icon: typeof Layers }> = {
   movement: { label: 'ДВИЖЕНИЕ', icon: TrendingUp },
   arbitrage: { label: 'АРБИТРАЖ', icon: ArrowUpDown },
   news: { label: 'НОВОСТЬ', icon: Newspaper },
+  listing: { label: 'ЛИСТИНГ', icon: ListPlus },
   system: { label: 'СИСТЕМА', icon: Activity },
 }
 
@@ -46,8 +47,13 @@ function NotifToast({ n, toastId, dur }: { n: AppNotification; toastId: number |
   const Icon = meta.icon
   return (
     <div
-      className="cp-toast group relative w-[356px] max-w-[92vw] overflow-hidden rounded-2xl border bg-[var(--card-solid)] shadow-2xl"
+      role="button"
+      tabIndex={0}
+      onClick={() => toast.dismiss(toastId)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toast.dismiss(toastId) }}
+      className="cp-toast group relative w-[356px] max-w-[92vw] cursor-pointer select-none overflow-hidden rounded-2xl border bg-[var(--card-solid)] shadow-2xl transition-transform hover:scale-[1.015] active:scale-[0.99]"
       style={{ borderColor: 'color-mix(in srgb, ' + sev.color + ' 30%, var(--border))', boxShadow: `0 18px 50px -18px ${sev.color}55, 0 8px 24px -12px rgba(0,0,0,0.6)` }}
+      title="Нажмите, чтобы закрыть"
     >
       {/* левая полоса серьёзности */}
       <div className="absolute inset-y-0 left-0 w-[3px]" style={{ background: `linear-gradient(180deg, ${sev.color}, color-mix(in srgb, ${sev.color} 30%, transparent))` }} />
@@ -109,9 +115,9 @@ export function emitNotification(opts: EmitOptions) {
     notifSessionCount: live.notifSessionCount + 1,
   })
 
-  // ── Настройки пользователя
+  // ── Настройки пользователя (для старых профилей без новых типов — дефолт)
   const app = useApp.getState()
-  const prefs = app.typePrefs[opts.type]
+  const prefs = app.typePrefs[opts.type] ?? { toast: true, sound: true, voice: false }
   if (!prefs) return
 
   if (prefs.toast) {

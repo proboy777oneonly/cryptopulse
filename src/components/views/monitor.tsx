@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   Activity, CheckCircle2, Cpu, Database, Gauge, HardDrive, MemoryStick, PlayCircle,
@@ -266,7 +266,7 @@ export function MonitorView() {
             </thead>
             <tbody>
               {connects.map((c) => {
-                const meta = EX_MAP[c.exchange]
+                const meta = EX_MAP[c.exchange] ?? { name: String(c.exchange ?? '—'), color: '#8b5cf6' }
                 return (
                   <tr key={c.id} className="border-b border-[var(--border)]/50 transition-colors hover:bg-[var(--muted)]">
                     <td className="py-2 pl-2">

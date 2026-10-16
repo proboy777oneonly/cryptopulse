@@ -61,7 +61,7 @@
   --secondary: rgba(139, 92, 246, 0.14);
   --secondary-foreground: #c4b5fd;
   --muted: rgba(255, 255, 255, 0.06);
-  --muted-foreground: #8a94ad;
+  --muted-foreground: #9aa6c3;
   --accent: rgba(34, 211, 238, 0.12);
   --accent-foreground: #67e8f9;
   --destructive: #f43f5e;
@@ -105,7 +105,7 @@
   --secondary: rgba(16, 185, 129, 0.12);
   --secondary-foreground: #6ee7b7;
   --muted: rgba(16, 185, 129, 0.07);
-  --muted-foreground: #4f9b70;
+  --muted-foreground: #74c495;
   --accent: rgba(52, 211, 153, 0.12);
   --accent-foreground: #6ee7b7;
   --destructive: #f43f5e;
@@ -161,7 +161,7 @@
   --secondary: rgba(236, 72, 153, 0.14);
   --secondary-foreground: #f9a8d4;
   --muted: rgba(255, 255, 255, 0.06);
-  --muted-foreground: #a98fa5;
+  --muted-foreground: #bba3b7;
   --accent: rgba(251, 146, 60, 0.12);
   --accent-foreground: #fdba74;
   --destructive: #f43f5e;
@@ -241,6 +241,7 @@
   }
   html {
     color-scheme: dark;
+    scroll-behavior: smooth;
   }
   [data-theme='crystal'] html,
   html[data-theme='crystal'] {
@@ -250,6 +251,34 @@
     @apply bg-background text-foreground;
     font-feature-settings: 'cv11', 'ss01';
     overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    letter-spacing: 0.005em;
+  }
+  /* Читаемость мелкого текста */
+  p, li, span, td, th {
+    text-wrap: pretty;
+  }
+  /* Аккуратное выделение текста в цвет темы */
+  ::selection {
+    background: color-mix(in srgb, var(--acc) 30%, transparent);
+    color: var(--foreground);
+  }
+  /* Курсор ввода в цвет акцента */
+  input, textarea, select {
+    caret-color: var(--acc);
+  }
+  /* Заметный фокус с клавиатуры (доступность) */
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--acc) 70%, transparent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  /* Тонкие скроллбары Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--acc) 35%, transparent) transparent;
   }
 }
 
@@ -323,6 +352,25 @@
   background: color-mix(in srgb, var(--acc) 55%, transparent);
   background-clip: content-box;
   border: 2px solid transparent;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   ВИЗУАЛЬНЫЕ УЛУЧШЕНИЯ ЧИТАЕМОСТИ
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Подсказки (title) — не управляем, но тултипы Radix делаем читабельнее */
+[data-radix-popper-content-wrapper] {
+  z-index: 90 !important;
+}
+
+/* Плавное появление контента вкладок */
+.cp-view-enter {
+  animation: cp-row-in 0.3s ease-out;
+}
+
+/* Приглушённый текст на карточках — чуть контрастнее молчаливого */
+.bg-card .text-xs {
+  line-height: 1.5;
 }
 
 /* ══════════════════════════════════════════════════════════════════

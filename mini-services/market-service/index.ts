@@ -9,6 +9,7 @@ import { BinanceWs } from './binance-ws'
 import { BookEngine } from './books'
 import { TickerHub, symbolRows } from './exchanges'
 import { HlWs } from './hl-ws'
+import { ListingsEngine, type ListingEvent } from './listings'
 import { NewsEngine, fetchFearGreed, type FgData } from './news'
 import { collectStats } from './telemetry'
 import { type ConnectRow, type MoverRow, type NewsItem, type ServiceStats, type WallRow } from './types'
@@ -32,6 +33,8 @@ const bookEngine = new BookEngine(tickerHub)
 const binanceWs = new BinanceWs(tickerHub, bookEngine)
 const hlWs = new HlWs(tickerHub, bookEngine)
 const newsEngine = new NewsEngine()
+const listingsEngine = new ListingsEngine()
+listingsEngine.setTickerHub(tickerHub)
 
 const state = {
   startedAt: Date.now(),
@@ -62,6 +65,10 @@ bookEngine.onWalls = (rows) => {
 newsEngine.onNews = (fresh: NewsItem[]) => {
   state.news += fresh.length
   io.emit('news', fresh)
+}
+
+listingsEngine.onListings = (fresh: ListingEvent[]) => {
+  io.emit('listings:new', fresh)
 }
 
 // ─── Трансляции ──────────────────────────────────────────────────────
@@ -142,9 +149,10 @@ io.on('connection', (socket) => {
   console.log(`[WS+] client ${socket.id}, total ${io.engine.clientsCount}`)
 
   socket.emit('hello', {
-    service: { version: '3.0.0', startedAt: state.startedAt },
+    service: { version: '3.1.0', startedAt: state.startedAt },
     fg: state.fg,
     news: newsEngine.items,
+    listings: listingsEngine.items,
     top: tickerHub.topLists(),
     symbols: tickerHub.symbolsCount(),
   })
@@ -170,8 +178,8 @@ io.on('connection', (socket) => {
 
 async function main() {
   console.log('════════════════════════════════════════════════')
-  console.log('  CryptoPulse Market Service v3.0.0')
-  console.log(`  port ${PORT} · 8 exchanges · F+S · real data`)
+  console.log('  CryptoPulse Market Service v3.1.0')
+  console.log(`  port ${PORT} · 8 exchanges · F+S · real data · listings`)
   console.log('════════════════════════════════════════════════')
 
   tickerHub.start()
@@ -179,6 +187,8 @@ async function main() {
   binanceWs.start()
   hlWs.start()
   void newsEngine.start().then(() => console.log('[NEWS] engine ready'))
+  listingsEngine.start()
+  console.log('[LISTINGS] engine started (BINANCE·BYBIT·OKX · F+S)')
   void fgLoop().then(() => console.log('[FG] fetched'))
 
   httpServer.listen(PORT, () => {

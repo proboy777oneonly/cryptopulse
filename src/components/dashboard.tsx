@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
-  ChartCandlestick, Gauge, Home, Layers, Menu, MonitorSmartphone, Newspaper, Radar,
+  ChartCandlestick, Gauge, Home, Layers, ListPlus, Menu, MonitorSmartphone, Newspaper, Radar,
   Settings as SettingsIcon, Users2, Bell,
 } from 'lucide-react'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
@@ -12,7 +12,7 @@ import { useLive } from '@/stores/live-store'
 import { DashboardHeader, UserAvatar } from '@/components/header'
 import { cn } from '@/lib/utils'
 import { setHash } from '@/lib/nav'
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 
 interface NavItem {
   id: ViewId
@@ -27,6 +27,7 @@ const NAV: NavItem[] = [
   { id: 'arbitrage', label: 'Арбитраж', icon: <Gauge className="h-[18px] w-[18px]" /> },
   { id: 'movements', label: 'Движения', icon: <ChartCandlestick className="h-[18px] w-[18px]" /> },
   { id: 'news', label: 'Новости', icon: <Newspaper className="h-[18px] w-[18px]" /> },
+  { id: 'listings', label: 'Листинг', icon: <ListPlus className="h-[18px] w-[18px]" /> },
   { id: 'notifications', label: 'Уведомления', icon: <Bell className="h-[18px] w-[18px]" /> },
   { id: 'monitor', label: 'Монитор', icon: <MonitorSmartphone className="h-[18px] w-[18px]" />, adminOnly: true },
   { id: 'users', label: 'Пользователи', icon: <Users2 className="h-[18px] w-[18px]" />, adminOnly: true },
@@ -37,8 +38,9 @@ const VIEW_META: Record<ViewId, { title: string; subtitle: string }> = {
   home: { title: 'Главная', subtitle: 'Обзор рынка: топы, страх и жадность, последние сигналы' },
   densities: { title: 'Плотности', subtitle: '' },
   arbitrage: { title: 'Арбитраж', subtitle: 'Межбиржевые спреды в реальном времени' },
-  movements: { title: 'Движения', subtitle: 'Binance · Bybit · OKX · фьючерсы и спот · настройки в шестерёнке у окна' },
+  movements: { title: 'Движения', subtitle: 'Binance · Bybit · OKX · фьючерсы и спот' },
   news: { title: 'Новости', subtitle: 'События, влияющие на крипторынок' },
+  listings: { title: 'Листинг / Делистинг', subtitle: 'Binance · Bybit · OKX · фьючерсы и спот · анонсы + торговая лента' },
   notifications: { title: 'Уведомления', subtitle: 'Полный журнал сигналов сессии' },
   monitor: { title: 'Монитор', subtitle: 'Телеметрия market-сервера, движков и коннектов' },
   users: { title: 'Пользователи', subtitle: 'Управление аккаунтами и ролями' },
@@ -131,7 +133,7 @@ export function Dashboard({ children }: { children: ReactElement }) {
           <div className="text-[11px] font-bold">{dataMode === 'live' ? 'Поток данных активен' : dataMode === 'reconnecting' ? 'Переподключение…' : 'Подключение…'}</div>
           <div className="text-[10px] text-[var(--muted-foreground)]">8 бирж · F+S · LIVE</div>
         </div>
-        <span className="cp-num text-[10px] font-bold text-[var(--muted-foreground)]">v3.0.0</span>
+        <span className="cp-num text-[10px] font-bold text-[var(--muted-foreground)]">v3.1.0</span>
       </div>
     </div>
   )

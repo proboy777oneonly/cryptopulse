@@ -131,6 +131,9 @@ export interface MovementWindowConfig {
   cooldownSec: number
   markets: MovementMarketToggles
   coinRules: MoveCoinRule[]
+  /** Позиция перетаскиваемого окна (px относительно полотна) */
+  x?: number
+  y?: number
 }
 
 export interface MovementAlert {
@@ -187,7 +190,7 @@ export interface NewsItem {
 
 // ─── Уведомления ──────────────────────────────────────────────────────
 
-export type NotifType = 'density' | 'movement' | 'arbitrage' | 'news' | 'system'
+export type NotifType = 'density' | 'movement' | 'arbitrage' | 'news' | 'listing' | 'system'
 export type NotifSeverity = 'info' | 'success' | 'warning' | 'critical'
 
 export interface AppNotification {
@@ -202,6 +205,20 @@ export interface AppNotification {
 }
 
 // ─── Fear & Greed ─────────────────────────────────────────────────────
+
+// ─── Листинг / Делистинг ─────────────────────────────────────────────
+
+export interface ListingEvent {
+  id: string
+  kind: 'listing' | 'delisting'
+  exchange: 'BINANCE' | 'BYBIT' | 'OKX'
+  market: 'F' | 'S'
+  symbols: string[]
+  title: string
+  url: string
+  time: number
+  source: 'announce' | 'live'
+}
 
 export interface FearGreed {
   value: number

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type {
   AppNotification, ArbOpportunity, ConnectRow, DensityEvent, EngineStats,
-  FearGreed, MovementAlert, NewsItem, ServiceStats, TickerSnapshot,
+  FearGreed, ListingEvent, MovementAlert, NewsItem, ServiceStats, TickerSnapshot,
 } from '@/engines/types'
 
 export type DataMode = 'connecting' | 'live' | 'reconnecting'
@@ -17,6 +17,7 @@ export interface LiveState {
   movementAlerts: Record<string, MovementAlert[]>
   arbitrageOpps: ArbOpportunity[]
   news: NewsItem[]
+  listings: ListingEvent[]
   fearGreed: FearGreed
   notifications: AppNotification[]
   unread: number
@@ -37,6 +38,7 @@ export const useLive = create<LiveState>(() => ({
   movementAlerts: {},
   arbitrageOpps: [],
   news: [],
+  listings: [],
   fearGreed: { value: 54, history: [], source: 'demo' },
   notifications: [],
   unread: 0,
@@ -51,6 +53,7 @@ export function resetLive() {
     tick: 0, sessionStart: Date.now(), running: false, dataMode: 'connecting', tickers: {},
     topMovers: { gainers: [], losers: [] },
     densityEvents: {}, movementAlerts: {}, arbitrageOpps: [], news: [],
+    listings: [],
     fearGreed: { value: 54, history: [], source: 'demo' },
     notifications: [], unread: 0, notifSessionCount: 0,
     stats: { ticks: 0, densities: 0, movements: 0, arbitrages: 0, news: 0, errors: 0, startedAt: Date.now(), wsClients: 0 },

@@ -6,6 +6,7 @@ import { DensitiesView } from './densities'
 import { ArbitrageView } from './arbitrage'
 import { MovementsView } from './movements'
 import { NewsView, NotificationsView } from './news'
+import { ListingsView } from './listings'
 import { MonitorView, UsersView } from './monitor'
 import { SettingsView } from './settings'
 
@@ -22,6 +23,8 @@ export function ViewsRouter() {
       return <MovementsView />
     case 'news':
       return <NewsView />
+    case 'listings':
+      return <ListingsView />
     case 'notifications':
       return <NotificationsView />
     case 'monitor':

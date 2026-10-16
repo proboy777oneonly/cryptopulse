@@ -34,6 +34,7 @@ const NOTIF_TYPES: { id: NotifType; label: string; color: string }[] = [
   { id: 'movement', label: 'Движения', color: '#10b981' },
   { id: 'arbitrage', label: 'Арбитраж', color: '#22d3ee' },
   { id: 'news', label: 'Новости', color: '#f472b6' },
+  { id: 'listing', label: 'Листинг/Делистинг', color: '#a3e635' },
   { id: 'system', label: 'Система', color: '#8b5cf6' },
 ]
 

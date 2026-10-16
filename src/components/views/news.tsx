@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  AlertTriangle, Bell, CheckCheck, Cpu, Gauge, Layers, Newspaper, Search, Trash2, TrendingUp,
+  AlertTriangle, Bell, CheckCheck, Cpu, Gauge, Layers, ListPlus, Newspaper, Search, Trash2, TrendingUp,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { clearNotifications, markAllRead, markRead, useLive } from '@/stores/live-store'
@@ -160,7 +160,26 @@ const NOTIF_META: Record<NotifType, { label: string; color: string; icon: typeof
   movement: { label: 'Движения', color: '#10b981', icon: TrendingUp },
   arbitrage: { label: 'Арбитраж', color: '#22d3ee', icon: Gauge },
   news: { label: 'Новости', color: '#f472b6', icon: Newspaper },
+  listing: { label: 'Листинг', color: '#a3e635', icon: ListPlus },
   system: { label: 'Система', color: '#8b5cf6', icon: Cpu },
+}
+
+function relTimeShort(t: number): string {
+  const diff = Math.floor((Date.now() - t) / 1000)
+  if (diff < 60) return 'только что'
+  if (diff < 3600) return `${Math.floor(diff / 60)} мин назад`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} ч назад`
+  return `${Math.floor(diff / 86400)} дн назад`
+}
+
+function dayLabel(t: number): string {
+  const d = new Date(t)
+  const today = new Date()
+  const yesterday = new Date(today.getTime() - 86400_000)
+  const same = (a: Date, b: Date) => a.toDateString() === b.toDateString()
+  if (same(d, today)) return 'Сегодня'
+  if (same(d, yesterday)) return 'Вчера'
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', weekday: 'short' })
 }
 
 export function NotificationsView() {
@@ -168,14 +187,28 @@ export function NotificationsView() {
   const unread = useLive((s) => s.unread)
   const [filter, setFilter] = useState<'all' | NotifType>('all')
   const [query, setQuery] = useState('')
+  const [onlyUnread, setOnlyUnread] = useState(false)
 
   const filtered = useMemo(
     () => notifications.filter((n) =>
       (filter === 'all' || n.type === filter)
+      && (!onlyUnread || !n.read)
       && (query === '' || n.title.toLowerCase().includes(query.toLowerCase()) || n.message.toLowerCase().includes(query.toLowerCase())),
     ),
-    [notifications, filter, query],
+    [notifications, filter, query, onlyUnread],
   )
+
+  // группировка по дням
+  const groups = useMemo(() => {
+    const map = new Map<string, typeof filtered>()
+    for (const n of filtered) {
+      const key = dayLabel(n.time)
+      const arr = map.get(key) ?? []
+      arr.push(n)
+      map.set(key, arr)
+    }
+    return [...map.entries()]
+  }, [filtered])
 
   const counts = useMemo(() => notifications.reduce<Record<string, number>>((acc, n) => {
     acc[n.type] = (acc[n.type] ?? 0) + 1
@@ -187,13 +220,25 @@ export function NotificationsView() {
       <div className="cp-border-glow flex flex-wrap items-center gap-2 rounded-2xl bg-card px-4 py-3">
         <Bell className="h-4 w-4" style={{ color: 'var(--acc)' }} />
         <span className="text-sm font-bold">Журнал уведомлений</span>
-        <span className="cp-num rounded-md bg-[var(--muted)] px-2 py-0.5 text-[10px] font-bold" style={{ color: 'var(--acc)' }}>
+        <span className="cp-num rounded-md border px-2 py-0.5 text-[10px] font-black" style={{ borderColor: 'color-mix(in srgb, var(--acc) 35%, transparent)', background: 'color-mix(in srgb, var(--acc) 8%, transparent)', color: 'var(--acc)' }}>
           {notifications.length} всего · {unread} новых
         </span>
-        <div className="relative ml-auto w-full sm:w-56">
+        <div className="relative w-full sm:ml-auto sm:w-56">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Поиск по журналу…" className="h-9 pl-9 text-xs" />
         </div>
+        <button
+          onClick={() => setOnlyUnread(!onlyUnread)}
+          className={cn(
+            'flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition-all',
+            onlyUnread ? 'text-white' : 'border-[var(--border)] bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+          )}
+          style={onlyUnread ? { background: 'linear-gradient(135deg, var(--acc), var(--acc-2))', borderColor: 'transparent' } : undefined}
+          aria-pressed={onlyUnread}
+        >
+          <span className={cn('h-2 w-2 rounded-full', unread > 0 && 'animate-pulse')} style={{ background: unread > 0 ? 'var(--acc)' : 'var(--muted-foreground)' }} />
+          Непрочитанные
+        </button>
         <button
           onClick={markAllRead}
           className="flex h-9 items-center gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 text-xs font-semibold transition-colors hover:text-[var(--acc)]"
@@ -221,60 +266,75 @@ export function NotificationsView() {
           <button
             key={t}
             onClick={() => setFilter(t)}
-            className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-all', filter === t ? 'text-white' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]')}
+            className={cn('flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all', filter === t ? 'text-white' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]')}
             style={filter === t
               ? { background: NOTIF_META[t].color, borderColor: 'transparent', boxShadow: `0 0 14px -4px ${NOTIF_META[t].color}` }
               : { borderColor: 'var(--border)', background: 'var(--muted)' }}
             aria-pressed={filter === t}
           >
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: NOTIF_META[t].color }} />
             {NOTIF_META[t].label} ({counts[t] ?? 0})
           </button>
         ))}
       </div>
 
-      {/* Список */}
+      {/* Список по дням */}
       {filtered.length === 0 ? (
         <div className="cp-border-glow rounded-2xl bg-card">
           <EmptyState icon={<Bell className="h-10 w-10" />} title="Уведомлений нет" hint="Настройте окна плотностей и движений — сигналы появятся здесь" />
         </div>
       ) : (
-        <div className="space-y-1.5">
-          {filtered.map((n) => {
-            const meta = NOTIF_META[n.type]
-            const Icon = meta.icon
-            return (
-              <motion.button
-                key={n.id}
-                layout="position"
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                onClick={() => markRead(n.id)}
-                className={cn(
-                  'flex w-full items-start gap-3 rounded-xl border bg-card px-4 py-3 text-left transition-all hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]',
-                  !n.read && 'border-l-[3px]',
-                )}
-                style={{ borderLeftColor: n.read ? undefined : meta.color }}
-              >
-                <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: `${meta.color}16`, color: meta.color }}>
-                  <Icon className="h-4 w-4" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-baseline gap-x-2">
-                    <span className="truncate text-sm font-bold">{n.title}</span>
-                    <span className="cp-num ml-auto shrink-0 text-[10px] text-[var(--muted-foreground)]">{fmtTimeSec(n.time)}</span>
-                  </span>
-                  <span className="mt-0.5 block text-xs leading-relaxed text-[var(--muted-foreground)]">{n.message}</span>
-                  <span className="mt-1 flex items-center gap-2">
-                    <span className="rounded-md px-1.5 py-0.5 text-[9px] font-black tracking-wider" style={{ background: `${meta.color}16`, color: meta.color }}>
-                      {meta.label.toUpperCase()}
-                    </span>
-                    {n.severity === 'critical' && <span className="rounded-md bg-[#f43f5e1a] px-1.5 py-0.5 text-[9px] font-black tracking-wider" style={{ color: '#f43f5e' }}>КРИТИЧНО</span>}
-                  </span>
-                </span>
-                {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--acc)', boxShadow: '0 0 8px var(--acc)' }} />}
-              </motion.button>
-            )
-          })}
+        <div className="space-y-5">
+          {groups.map(([day, items]) => (
+            <div key={day}>
+              <div className="mb-2 flex items-center gap-3 px-1">
+                <span className="text-[11px] font-black uppercase tracking-[0.14em] text-[var(--muted-foreground)]">{day}</span>
+                <span className="h-px flex-1 bg-[var(--border)]" />
+                <span className="cp-num text-[10px] text-[var(--muted-foreground)]">{items.length}</span>
+              </div>
+              <div className="space-y-1.5">
+                {items.map((n) => {
+                  const meta = NOTIF_META[n.type]
+                  const Icon = meta.icon
+                  return (
+                    <motion.button
+                      key={n.id}
+                      layout="position"
+                      initial={{ opacity: 0, y: -8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      onClick={() => markRead(n.id)}
+                      className={cn(
+                        'flex w-full items-start gap-3 rounded-xl border bg-card px-4 py-3 text-left transition-all hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]',
+                        !n.read && 'border-l-[3px]',
+                      )}
+                      style={{ borderLeftColor: n.read ? undefined : meta.color }}
+                    >
+                      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border" style={{ background: `${meta.color}14`, borderColor: `${meta.color}30`, color: meta.color }}>
+                        <Icon className="h-4 w-4" strokeWidth={2.2} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-baseline gap-x-2">
+                          <span className="truncate text-sm font-bold">{n.title}</span>
+                          <span className="cp-num ml-auto shrink-0 text-[10px] text-[var(--muted-foreground)]" title={fmtTimeSec(n.time)}>
+                            {relTimeShort(n.time)}
+                          </span>
+                        </span>
+                        <span className="mt-0.5 block text-xs leading-relaxed text-[var(--muted-foreground)]">{n.message}</span>
+                        <span className="mt-1.5 flex items-center gap-2">
+                          <span className="rounded-md px-1.5 py-0.5 text-[9px] font-black tracking-wider" style={{ background: `${meta.color}16`, color: meta.color }}>
+                            {meta.label.toUpperCase()}
+                          </span>
+                          {n.severity === 'critical' && <span className="rounded-md bg-[#f43f5e1a] px-1.5 py-0.5 text-[9px] font-black tracking-wider" style={{ color: '#f43f5e' }}>КРИТИЧНО</span>}
+                          {n.severity === 'warning' && <span className="rounded-md bg-[#fbbf241a] px-1.5 py-0.5 text-[9px] font-black tracking-wider" style={{ color: '#fbbf24' }}>ВАЖНО</span>}
+                        </span>
+                      </span>
+                      {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--acc)', boxShadow: '0 0 8px var(--acc)' }} />}
+                    </motion.button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

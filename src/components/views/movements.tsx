@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
-  ChartCandlestick, Clock, Plus, Power, Settings2, Trash2, TrendingDown, TrendingUp, X,
+  ChartCandlestick, GripHorizontal, Plus, Power, Settings2, Trash2, TrendingUp, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,12 +14,24 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import { EX_MAP, fmtPrice, fmtTimeSec, fmtUsd, type MovementWindowConfig } from '@/engines/types'
-import { SOUNDS, soundEngine } from '@/engines/sound'
 import { toastSuccess } from '@/engines/notifier'
 import { EmptyState } from '@/components/ui-bits'
 import { cn } from '@/lib/utils'
 
 const MARKET_KEYS = ['BINANCE_F', 'BINANCE_S', 'BYBIT_F', 'BYBIT_S', 'OKX_F', 'OKX_S'] as const
+
+const WIN_W = 430
+const WIN_H_EST = 300
+const GAP = 16
+
+/** Позиция по умолчанию — каскадом слева направо */
+function defaultPos(i: number, wide: boolean) {
+  const perRow = wide ? 2 : 1
+  return {
+    x: 12 + (i % perRow) * (WIN_W + GAP),
+    y: 12 + Math.floor(i / perRow) * (WIN_H_EST + GAP),
+  }
+}
 
 function MarketToggle({ label, color, checked, onChange }: { label: string; color: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -214,53 +226,139 @@ function MovementSettingsDialog({ win, open, onOpenChange }: { win: MovementWind
 
 const EMPTY_EVENTS: never[] = []
 
-// ─── Окно движений ────────────────────────────────────────────────────
+// ─── Компактное перетаскиваемое окно движений ─────────────────────────
 
-function MovementWindowCard({ win }: { win: MovementWindowConfig }) {
+function MovementWindowCard({ win, index, z, onFront, wide }: {
+  win: MovementWindowConfig
+  index: number
+  z: number
+  onFront: () => void
+  wide: boolean
+}) {
   const { updateMovementWindow, removeMovementWindow } = useApp()
   const alerts = useLive((s) => s.movementAlerts[win.id] ?? EMPTY_EVENTS)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  // во время перетаскивания — локальная позиция, иначе — из конфига (или дефолт)
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null)
+  const pos = dragPos
+    ?? (win.x !== undefined && win.y !== undefined ? { x: win.x, y: win.y } : defaultPos(index, wide))
+  const dragOffset = useRef<{ dx: number; dy: number } | null>(null)
+  const headerRef = useRef<HTMLDivElement>(null)
+
+  // синхронизация не нужна: позиция выводится из конфига, локальная — только в момент drag
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if (settingsOpen) return
+    const target = e.target as HTMLElement
+    if (target.closest('button')) return // кнопки в шапке не тянут окно
+    onFront()
+    dragOffset.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y }
+    setDragPos({ x: pos.x, y: pos.y })
+    setDragging(true)
+    headerRef.current?.setPointerCapture(e.pointerId)
+  }, [onFront, pos.x, pos.y, settingsOpen])
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragOffset.current) return
+    const maxX = Math.max(0, (headerRef.current?.parentElement?.parentElement?.clientWidth ?? 1600) - 140)
+    const x = Math.min(Math.max(0, e.clientX - dragOffset.current.dx), maxX)
+    const y = Math.max(0, e.clientY - dragOffset.current.dy)
+    setDragPos({ x, y })
+  }, [])
+
+  const onPointerUp = useCallback(() => {
+    if (!dragOffset.current) return
+    dragOffset.current = null
+    setDragging(false)
+    const p = dragPos ?? pos
+    updateMovementWindow(win.id, { x: p.x, y: p.y })
+    setDragPos(null)
+  }, [dragPos, pos, updateMovementWindow, win.id])
 
   const enabledMarkets = MARKET_KEYS.filter((k) => win.markets[k]).length
 
-  return (
-    <div className="cp-border-glow overflow-hidden rounded-2xl bg-card" style={{ borderTop: win.enabled ? '2px solid color-mix(in srgb, var(--pos) 55%, transparent)' : '2px solid var(--border)' }}>
-      <div className="flex items-center gap-2 border-b border-[var(--border)] px-4 py-3">
-        <ChartCandlestick className="h-4 w-4 shrink-0" style={{ color: win.enabled ? 'var(--pos)' : 'var(--muted-foreground)' }} />
-        <span className="truncate text-sm font-black">
-          {win.name.toUpperCase()} · {win.period.toUpperCase()} ±{win.thresholdPct}%
+  const card = (dragged: boolean, zIndex: number, style: React.CSSProperties) => (
+    <div
+      className={cn(
+        'cp-border-glow flex flex-col overflow-hidden rounded-2xl bg-card shadow-xl transition-shadow',
+        dragged && 'shadow-2xl ring-2 ring-[color-mix(in_srgb,var(--acc)_45%,transparent)]',
+        !win.enabled && 'opacity-75',
+      )}
+      style={{
+        ...style,
+        zIndex,
+        width: 'min(430px, calc(100vw - 32px))',
+        borderTop: win.enabled ? '2px solid color-mix(in srgb, var(--pos) 55%, transparent)' : '2px solid var(--border)',
+      }}
+    >
+      {/* Шапка — рукоятка перетаскивания */}
+      <div
+        ref={headerRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onDoubleClick={() => { setDragPos(null); updateMovementWindow(win.id, { x: defaultPos(index, wide).x, y: defaultPos(index, wide).y }) }}
+        className={cn(
+          'flex touch-none items-center gap-1.5 border-b border-[var(--border)] px-2.5 py-2',
+          dragged ? 'cursor-grabbing' : 'cursor-grab',
+        )}
+        title="Потяните за шапку, чтобы переместить окно · двойной клик — вернуть на место"
+      >
+        <GripHorizontal className={cn('h-3.5 w-3.5 shrink-0 transition-colors', dragged ? 'text-[var(--acc)]' : 'text-[var(--muted-foreground)]')} />
+        <ChartCandlestick className="h-3.5 w-3.5 shrink-0" style={{ color: win.enabled ? 'var(--pos)' : 'var(--muted-foreground)' }} />
+        <span className="truncate text-xs font-black">
+          {win.name.toUpperCase()}
         </span>
-        <span className="cp-num ml-auto rounded-md bg-[var(--muted)] px-2 py-0.5 text-[10px] font-bold" style={{ color: alerts.length > 0 ? 'var(--pos)' : 'var(--muted-foreground)' }}>
-          {alerts.length} сигналов
+        <span className="cp-num shrink-0 rounded-md bg-[var(--muted)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--muted-foreground)]">
+          {win.period.toUpperCase()} ±{win.thresholdPct}%
+        </span>
+        <span className="cp-num ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-bold" style={{ color: alerts.length > 0 ? 'var(--pos)' : 'var(--muted-foreground)', background: alerts.length > 0 ? 'color-mix(in srgb, var(--pos) 12%, transparent)' : 'var(--muted)' }}>
+          {alerts.length}
         </span>
         <button
           onClick={() => setSettingsOpen(true)}
           title="Настройки окна"
           aria-label="Настройки окна движений"
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--acc)]"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--acc)]"
         >
-          <Settings2 className="h-4 w-4" />
+          <Settings2 className="h-3.5 w-3.5" />
         </button>
         <button
           onClick={() => updateMovementWindow(win.id, { enabled: !win.enabled })}
-          className={cn('flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-[var(--muted)]', win.enabled ? 'text-[var(--pos)]' : 'text-[var(--muted-foreground)]')}
+          className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-[var(--muted)]', win.enabled ? 'text-[var(--pos)]' : 'text-[var(--muted-foreground)]')}
           title={win.enabled ? 'Остановить окно' : 'Запустить окно'}
           aria-label="Питание окна движений"
         >
-          <Power className="h-3.5 w-3.5" />
+          <Power className="h-3 w-3" />
         </button>
-        <button onClick={() => removeMovementWindow(win.id)} className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--destructive)]" title="Удалить окно" aria-label="Удалить окно движений">
-          <Trash2 className="h-3.5 w-3.5" />
+        <button onClick={() => removeMovementWindow(win.id)} className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--destructive)]" title="Удалить окно" aria-label="Удалить окно движений">
+          <Trash2 className="h-3 w-3" />
         </button>
       </div>
 
-      <div className="min-h-[220px] max-h-[420px] overflow-y-auto p-3">
+      {/* Компактное тело */}
+      <div className="min-h-[96px] max-h-[240px] overflow-y-auto p-2">
         {!win.enabled ? (
-          <EmptyState icon={<Power className="h-8 w-8" />} title="Окно остановлено" hint="Включите окно, чтобы отслеживать движения" />
+          <div className="flex h-[88px] flex-col items-center justify-center gap-1 text-center">
+            <Power className="h-5 w-5 text-[var(--muted-foreground)] opacity-50" />
+            <span className="text-[11px] font-semibold text-[var(--muted-foreground)]">Окно остановлено</span>
+          </div>
         ) : enabledMarkets === 0 ? (
-          <EmptyState icon={<Settings2 className="h-8 w-8" />} title="Рынки не выбраны" hint="Откройте настройки окна (шестерёнка) и включите хотя бы один рынок" />
+          <div className="flex h-[88px] flex-col items-center justify-center gap-1 text-center">
+            <Settings2 className="h-5 w-5 text-[var(--muted-foreground)] opacity-50" />
+            <span className="text-[11px] font-semibold text-[var(--muted-foreground)]">Рынки не выбраны</span>
+            <span className="text-[10px] text-[var(--muted-foreground)] opacity-70">включите их в шестерёнке</span>
+          </div>
         ) : alerts.length === 0 ? (
-          <EmptyState icon={<TrendingUp className="h-8 w-8" />} title="Ожидание движений…" hint={`Монета должна пройти ±${win.thresholdPct}% от открытия ${win.period}-свечи при объёме от ${fmtUsd(win.minVol24h)}`} />
+          <div className="flex h-[88px] flex-col items-center justify-center gap-1 text-center">
+            <TrendingUp className="h-5 w-5 text-[var(--muted-foreground)] opacity-50" />
+            <span className="text-[11px] font-semibold text-[var(--muted-foreground)]">Ожидание движений…</span>
+            <span className="cp-num text-[10px] text-[var(--muted-foreground)] opacity-70">
+              ±{win.thresholdPct}% от открытия · объём от {fmtUsd(win.minVol24h)}
+            </span>
+          </div>
         ) : (
           <div className="space-y-1">
             {alerts.map((a) => {
@@ -268,21 +366,18 @@ function MovementWindowCard({ win }: { win: MovementWindowConfig }) {
               return (
                 <motion.div
                   key={a.id}
-                  initial={{ opacity: 0, x: -14, backgroundColor: 'color-mix(in srgb, var(--acc) 12%, transparent)' }}
-                  animate={{ opacity: 1, x: 0, backgroundColor: 'transparent' }}
-                  transition={{ duration: 0.5 }}
-                  className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--muted)] px-2.5 py-1.5 text-xs"
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.35 }}
+                  className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--muted)] px-2 py-1 text-[11px]"
                 >
-                  <span className="cp-num w-14 shrink-0 text-[10px] text-[var(--muted-foreground)]">{fmtTimeSec(a.time)}</span>
+                  <span className="cp-num w-[52px] shrink-0 text-[9px] text-[var(--muted-foreground)]">{fmtTimeSec(a.time)}</span>
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
-                  <span className="hidden w-16 shrink-0 truncate text-[10px] font-bold text-[var(--muted-foreground)] sm:block">{EX_MAP[a.exchange].name}</span>
-                  <span className="w-20 shrink-0 truncate font-black">{a.symbol}</span>
-                  <span className="cp-num hidden w-8 shrink-0 text-[10px] text-[var(--muted-foreground)] sm:block">{a.period.toUpperCase()}</span>
-                  <span className="cp-num w-20 shrink-0 text-right font-black" style={{ color: a.changePct >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                    {a.changePct >= 0 ? '▲' : '▼'} {Math.abs(a.changePct).toFixed(2)}%
+                  <span className="w-[74px] shrink-0 truncate font-black">{a.symbol}</span>
+                  <span className="cp-num w-[62px] shrink-0 text-right font-black" style={{ color: a.changePct >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                    {a.changePct >= 0 ? '▲' : '▼'}{Math.abs(a.changePct).toFixed(1)}%
                   </span>
-                  <span className="cp-num hidden w-20 shrink-0 text-right text-[11px] md:block">{fmtPrice(a.price)}</span>
-                  <span className="cp-num ml-auto hidden w-16 shrink-0 text-right text-[10px] text-[var(--muted-foreground)] lg:block">{fmtUsd(a.vol24h)}</span>
+                  <span className="cp-num ml-auto hidden shrink-0 text-[10px] text-[var(--muted-foreground)] sm:block">{fmtPrice(a.price)}</span>
                 </motion.div>
               )
             })}
@@ -293,34 +388,99 @@ function MovementWindowCard({ win }: { win: MovementWindowConfig }) {
       <MovementSettingsDialog win={win} open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )
+
+  // На узких экранах — обычная стопка без absolute
+  if (!wide) {
+    return <div className="relative">{card(false, 1, {})}</div>
+  }
+
+  return card(dragging, z, {
+    position: 'absolute',
+    left: pos.x,
+    top: pos.y,
+    willChange: dragging ? 'transform, left, top' : undefined,
+  })
 }
 
 export function MovementsView() {
   const movementWindows = useApp((s) => s.movementWindows)
   const addMovementWindow = useApp((s) => s.addMovementWindow)
+  const [wide, setWide] = useState(true)
+  const [front, setFront] = useState<{ id: string; z: number } | null>(null)
+  const frontZ = useRef(20)
+  const canvasRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const apply = () => setWide(mq.matches)
+    apply()
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
+  }, [])
+
+  const bringToFront = (id: string) => {
+    frontZ.current += 1
+    setFront({ id, z: frontZ.current })
+  }
+
+  // высота полотна: ниже самого нижнего окна
+  const canvasH = wide
+    ? Math.max(
+      420,
+      ...movementWindows.map((w, i) => (w.y ?? defaultPos(i, true).y) + 320),
+    )
+    : undefined
 
   return (
-    <div className="space-y-4">
-      <div className="cp-border-glow flex flex-wrap items-center gap-3 rounded-2xl bg-card px-4 py-3">
-        <div className="flex items-center gap-2 text-sm font-black">
-          <TrendingUp className="h-4 w-4" style={{ color: 'var(--pos)' }} /> Окна движений — независимы друг от друга
-        </div>
-        <div className="hidden items-center gap-2 text-xs text-[var(--muted-foreground)] md:flex">
-          <TrendingDown className="h-3.5 w-3.5" /> отсчёт от открытия свечи · мгновенное уведомление без задержки
-        </div>
-        <div className="hidden items-center gap-1.5 text-xs text-[var(--muted-foreground)] lg:flex">
-          <Clock className="h-3.5 w-3.5" /> настройки — в шестерёнке у окна
-        </div>
-        <Button size="sm" className="ml-auto" disabled={movementWindows.length >= 6} onClick={() => { addMovementWindow(); toastSuccess('Окно создано', 'Откройте шестерёнку, чтобы настроить параметры') }}>
-          <Plus className="mr-1.5 h-4 w-4" /> Новое окно ({movementWindows.length}/6)
+    <div className="space-y-3">
+      {/* Тулбар: только создание окон */}
+      <div className="cp-border-glow flex flex-wrap items-center gap-2.5 rounded-2xl bg-card px-4 py-2.5">
+        <Button
+          size="sm"
+          className="h-9 rounded-xl px-4"
+          disabled={movementWindows.length >= 6}
+          onClick={() => {
+            addMovementWindow()
+            toastSuccess('Окно создано', 'Потяните за шапку, чтобы переместить · шестерёнка — настройки')
+          }}
+        >
+          <Plus className="mr-1.5 h-4 w-4" /> Новое окно
         </Button>
+        <span className="cp-num rounded-md border border-[var(--border)] bg-[var(--muted)] px-2 py-1 text-[10px] font-bold text-[var(--muted-foreground)]">
+          {movementWindows.length}/6 окон
+        </span>
+        <span className="ml-auto hidden text-[10px] text-[var(--muted-foreground)] lg:block">
+          перетаскивайте окна за шапку · двойной клик по шапке — на место
+        </span>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        {movementWindows.map((w) => (
-          <MovementWindowCard key={w.id} win={w} />
-        ))}
-      </div>
+      {/* Полотно */}
+      {movementWindows.length === 0 ? (
+        <div className="cp-border-glow rounded-2xl bg-card">
+          <EmptyState
+            icon={<ChartCandlestick className="h-10 w-10" />}
+            title="Нет окон движений"
+            hint="Создайте первое окно — каждое следит за своими биржами и порогами независимо"
+          />
+        </div>
+      ) : (
+        <div
+          ref={canvasRef}
+          className={cn(wide && 'relative', !wide && 'flex flex-col gap-3')}
+          style={wide ? { minHeight: canvasH } : undefined}
+        >
+          {movementWindows.map((w, i) => (
+            <MovementWindowCard
+              key={w.id}
+              win={w}
+              index={i}
+              z={front?.id === w.id ? front.z : 10 + i}
+              onFront={() => bringToFront(w.id)}
+              wide={wide}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

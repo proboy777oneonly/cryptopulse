@@ -79,3 +79,29 @@ Work Log:
 Stage Summary:
 - Приложение полностью на реальных данных 8 бирж (F+S). Market-service: /home/z/my-project/mini-services/market-service (bun run dev, лог service.log)
 - Админ: admin@screen.io / admin123. Версия 3.0.0
+
+---
+Task ID: 13
+Agent: main
+Task: Багфиксы, визуал, тосты-кликом, компактные перетаскиваемые окна движений, вкладка Листинг/Делистинг (BINANCE·BYBIT·OKX F+S), редизайн уведомлений
+
+Work Log:
+- Сервер (market-service v3.1.0):
+  - Новый модуль listings.ts: анонсы Binance (CMS cat.48 листинги + cat.49 делисты), Bybit (v5/announcements new_crypto + delistings), OKX (support/announcements new-listings + delistings); парсинг символов/рынка из заголовков, фильтр шума (collateral/bStocks и пр.)
+  - Живой дифф символов (liveDiff каждую минуту): BINANCE_S, BYBIT_F/S, OKX_F/S — «замечен в торгах» при vol>$1k, порог >5 новых = сброс базы
+  - TickerHub.snapshotSymbols/symbolVol; события 'listings:new' + listings в hello; сортировка по времени, дедуп
+- Клиент:
+  - NotifType += 'listing' (тосты/звук/голос/журнал/настройки), persist-merge дефолтов для старых профилей, дефолт звук bell
+  - hub.ts: hello.listings + listings:new → стор + уведомления (листинг=success, делист=warning)
+  - Новая вкладка «Листинг» (listings.tsx): стат-карточки, фильтры (тип/биржа/F-S/источник), карточки с символами-чипами, ссылками, live-бейджем
+  - Движения: окна компактнее (430px, max-h 240px), перетаскивание за шапку (pointer capture), z-index поверх, двойной клик — сброс позиции, позиция x/y в конфиге (синхронизация на сервер), «+Новое окно» наверх, старая подпись удалена, на <1024px — стопка без absolute
+  - Тосты: клик по телу тоста закрывает его (role=button, hover-эффект)
+  - Колокол: иконки типов, relative time, счётчик критичных, переход на профильную вкладку по клику
+  - Журнал уведомлений: группировка Сегодня/Вчера/дата, фильтр «Непрочитанные», severity-бейджи ВАЖНО/КРИТИЧНО
+  - Визуал: контраст muted-foreground во всех 4 темах (midnight #9aa6c3, terminal #74c495, sunset #bba3b7), antialiasing, ::selection, caret, focus-visible, Firefox scrollbar, text-wrap: pretty
+- Багфиксы: monitor EX_MAP fallback, dashboard ReactNode, monitor useEffect import, landing SVG x4→x2, app-store toasts as const, exchanges.ts p.def null-guard, listings base undefined, set-state-in-effect (derived dragPos)
+- E2E: свежая сессия 0 ошибок; драг окна (126,240→413,528), dblclick reset, клик тоста закрывает, листинги 50 событий (13 BNB/18 BYB/19 OKX, 6 live), все 10 вкладок рендерятся; VLM 7–9/10
+- Сервисы перезапущены через setsid (survive): :3000, :3003, Caddy :81
+
+Stage Summary:
+- v3.1.0: вкладка Листинг/Делистинг на реальных анонсах 3 бирж + живом диффе, перетаскиваемые компактные окна движений, клик-закрытие тостов, редизайн уведомлений, глобальное улучшение читаемости. Админ: admin@screen.io / admin123
