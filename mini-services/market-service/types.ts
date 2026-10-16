@@ -61,6 +61,24 @@ export interface SpreadRow {
   vol24h: number
 }
 
+/** Лучшие цены символа на одном рынке (по всем биржам) */
+export interface BestRow {
+  minEx: Ex
+  minP: number
+  maxEx: Ex
+  maxP: number
+  vol: number
+  exs: number
+}
+
+/** Набор спредов для 4 режимов арбитража: покупка → продажа */
+export interface SpreadSets {
+  FF: SpreadRow[]
+  FS: SpreadRow[]
+  SF: SpreadRow[]
+  SS: SpreadRow[]
+}
+
 export interface WallRow {
   id: string
   ex: Ex

@@ -6,7 +6,33 @@ import { ArrowDownRight, ArrowUpRight, Bell, Clock, Flame, Gauge, Layers, Newspa
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import { EX_MAP, FG_LABEL, fmtTime, fmtUsd, type TickerSnapshot } from '@/engines/types'
-import { AnimatedNumber, EmptyState, ExBadge, FearGreedGauge, Pct, SlideBar, Sparkline, StatCard, TickerCopy, useUptime } from '@/components/ui-bits'
+import { AnimatedNumber, EmptyState, ExBadge, FearGreedGauge, Pct, SlideBar, Sparkline, StatCard, TickerCopy, splitQuote, useUptime } from '@/components/ui-bits'
+
+/** Строка топа: тикер получает всё свободное место, база жирно + квонт приглушённо */
+function TopRow({ t, i, max, positive }: { t: TickerSnapshot; i: number; max: number; positive?: boolean }) {
+  const { base, quote } = splitQuote(t.symbol)
+  return (
+    <motion.div initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }} className="group">
+      <div className="flex items-center gap-2">
+        <span className="cp-num w-4 shrink-0 text-[10px] font-bold text-[var(--muted-foreground)]">{i + 1}</span>
+        <span className="flex min-w-0 flex-1 items-baseline gap-1">
+          <TickerCopy
+            symbol={t.symbol}
+            display={base}
+            className="min-w-0 truncate text-[14px] font-black tracking-tight transition-colors group-hover:text-[var(--acc)]"
+          />
+          {quote && <span className="shrink-0 text-[9px] font-bold text-[var(--muted-foreground)] opacity-60">{quote}</span>}
+        </span>
+        <ExBadge ex={t.exchange} size="sm" />
+        <span className="cp-num hidden w-[58px] shrink-0 text-right text-[10px] text-[var(--muted-foreground)] sm:block">{fmtUsd(t.vol24h)}</span>
+        <Pct v={t.change24hPct} bold className="w-[68px] shrink-0 text-right text-[13px]" />
+      </div>
+      <div className="mt-1 pl-6">
+        <SlideBar pct={t.change24hPct} max={max} positive={positive} delay={i * 40} />
+      </div>
+    </motion.div>
+  )
+}
 
 export function HomeView() {
   const setView = useApp((s) => s.setView)
@@ -129,18 +155,7 @@ export function HomeView() {
           <div className="mt-4 space-y-2.5">
             {gainers.length === 0 && <EmptyState title="Сбор данных рынка…" />}
             {gainers.map((t, i) => (
-              <motion.div key={t.symbol} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }} className="group">
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="cp-num w-4 text-[10px] font-bold text-[var(--muted-foreground)]">{i + 1}</span>
-                  <TickerCopy symbol={t.symbol} className="w-14 shrink-0 truncate font-bold" />
-                  <ExBadge ex={t.exchange} size="sm" />
-                  <span className="cp-num ml-auto text-[10px] text-[var(--muted-foreground)]">{fmtUsd(t.vol24h)}</span>
-                  <Pct v={t.change24hPct} bold className="w-16 text-right" />
-                </div>
-                <div className="mt-1 pl-6">
-                  <SlideBar pct={t.change24hPct} max={maxG} positive delay={i * 40} />
-                </div>
-              </motion.div>
+              <TopRow key={t.symbol} t={t} i={i} max={maxG} positive />
             ))}
           </div>
         </div>
@@ -153,18 +168,7 @@ export function HomeView() {
           <div className="mt-4 space-y-2.5">
             {losers.length === 0 && <EmptyState title="Сбор данных рынка…" />}
             {losers.map((t, i) => (
-              <motion.div key={t.symbol} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="cp-num w-4 text-[10px] font-bold text-[var(--muted-foreground)]">{i + 1}</span>
-                  <TickerCopy symbol={t.symbol} className="w-14 shrink-0 truncate font-bold" />
-                  <ExBadge ex={t.exchange} size="sm" />
-                  <span className="cp-num ml-auto text-[10px] text-[var(--muted-foreground)]">{fmtUsd(t.vol24h)}</span>
-                  <Pct v={t.change24hPct} bold className="w-16 text-right" />
-                </div>
-                <div className="mt-1 pl-6">
-                  <SlideBar pct={t.change24hPct} max={maxL} delay={i * 40} />
-                </div>
-              </motion.div>
+              <TopRow key={t.symbol} t={t} i={i} max={maxL} />
             ))}
           </div>
         </div>

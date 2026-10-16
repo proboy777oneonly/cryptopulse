@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
-  ChartCandlestick, Gauge, Home, Layers, ListPlus, Menu, MonitorSmartphone, Newspaper, Radar,
+  CandlestickChart, ChartCandlestick, Gauge, Home, Layers, ListPlus, Menu, MonitorSmartphone, Newspaper, Radar,
   Settings as SettingsIcon, Users2, Bell,
 } from 'lucide-react'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
@@ -23,6 +23,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { id: 'home', label: 'Главная', icon: <Home className="h-[18px] w-[18px]" /> },
+  { id: 'market', label: 'Обзор рынка', icon: <CandlestickChart className="h-[18px] w-[18px]" /> },
   { id: 'densities', label: 'Плотности', icon: <Layers className="h-[18px] w-[18px]" /> },
   { id: 'arbitrage', label: 'Арбитраж', icon: <Gauge className="h-[18px] w-[18px]" /> },
   { id: 'movements', label: 'Движения', icon: <ChartCandlestick className="h-[18px] w-[18px]" /> },
@@ -36,6 +37,7 @@ const NAV: NavItem[] = [
 
 const VIEW_META: Record<ViewId, { title: string; subtitle: string }> = {
   home: { title: 'Главная', subtitle: 'Обзор рынка: топы, страх и жадность, последние сигналы' },
+  market: { title: '', subtitle: '' },
   densities: { title: '', subtitle: '' },
   arbitrage: { title: 'Арбитраж', subtitle: 'Межбиржевые спреды в реальном времени' },
   movements: { title: '', subtitle: '' },
@@ -133,7 +135,7 @@ export function Dashboard({ children }: { children: ReactElement }) {
           <div className="text-[11px] font-bold">{dataMode === 'live' ? 'Поток данных активен' : dataMode === 'reconnecting' ? 'Переподключение…' : 'Подключение…'}</div>
           <div className="text-[10px] text-[var(--muted-foreground)]">8 бирж · F+S · LIVE</div>
         </div>
-        <span className="cp-num text-[10px] font-bold text-[var(--muted-foreground)]">v3.3.0</span>
+        <span className="cp-num text-[10px] font-bold text-[var(--muted-foreground)]">v3.4.0</span>
       </div>
     </div>
   )

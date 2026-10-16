@@ -246,16 +246,18 @@ export function NotificationsView() {
         <div className="space-y-5">
           {groups.map(([day, items]) => (
             <div key={day}>
-              <div className="mb-2 flex items-center gap-3 px-1">
+              <div className="mb-2.5 flex items-center gap-3 px-1">
                 <span className="text-[11px] font-black uppercase tracking-[0.14em] text-[var(--muted-foreground)]">{day}</span>
-                <span className="h-px flex-1 bg-[var(--border)]" />
-                <span className="cp-num text-[10px] text-[var(--muted-foreground)]">{items.length}</span>
+                <span className="h-px flex-1 bg-gradient-to-r from-[var(--border)] to-transparent" />
+                <span className="cp-num rounded-full border border-[var(--border)] bg-[var(--muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--muted-foreground)]">{items.length}</span>
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 {items.map((n) => {
                   const meta = NOTIF_META[n.type]
                   const Icon = meta.icon
                   const structured = (n.type === 'density' || n.type === 'movement') && n.ticker
+                  const sevCritical = n.severity === 'critical'
+                  const sevWarning = n.severity === 'warning'
                   return (
                     <motion.button
                       key={n.id}
@@ -264,33 +266,44 @@ export function NotificationsView() {
                       animate={{ opacity: 1, y: 0 }}
                       onClick={() => markRead(n.id)}
                       className={cn(
-                        'flex w-full items-start gap-3 rounded-xl border bg-card px-4 py-3 text-left transition-all hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]',
-                        !n.read && 'border-l-[3px]',
+                        'group relative flex w-full items-start gap-3.5 overflow-hidden rounded-2xl border bg-card px-4 py-3.5 text-left transition-all hover:-translate-y-px hover:shadow-[0_10px_30px_-16px_var(--glow)]',
+                        !n.read
+                          ? 'border-[color-mix(in_srgb,var(--acc)_28%,var(--border))]'
+                          : 'border-[var(--border)] hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]',
                       )}
-                      style={{ borderLeftColor: n.read ? undefined : meta.color }}
+                      style={!n.read ? { background: sevCritical
+                        ? 'linear-gradient(135deg, color-mix(in srgb, #f43f5e 7%, var(--card)), var(--card) 55%)'
+                        : sevWarning
+                          ? 'linear-gradient(135deg, color-mix(in srgb, #fbbf24 6%, var(--card)), var(--card) 55%)'
+                          : 'linear-gradient(135deg, color-mix(in srgb, var(--acc) 6%, var(--card)), var(--card) 55%)' } : undefined}
                     >
-                      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border" style={{ background: `${meta.color}14`, borderColor: `${meta.color}30`, color: meta.color }}>
-                        <Icon className="h-4 w-4" strokeWidth={2.2} />
+                      {/* левая полоса серьёзности */}
+                      <span className="absolute inset-y-2 left-0 w-[3px] rounded-full" style={{ background: n.read ? 'transparent' : meta.color, boxShadow: n.read ? undefined : `0 0 10px ${meta.color}` }} />
+                      <span
+                        className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-transform group-hover:scale-105"
+                        style={{ background: `${meta.color}16`, borderColor: `${meta.color}33`, color: meta.color, boxShadow: n.read ? undefined : `0 6px 18px -10px ${meta.color}` }}
+                      >
+                        <Icon className="h-[18px] w-[18px]" strokeWidth={2.2} />
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="flex flex-wrap items-center gap-2">
-                          <span className="text-[9px] font-black uppercase tracking-wider" style={{ color: meta.color }}>{meta.label}</span>
-                          {n.severity === 'critical' && <span className="rounded-md bg-[#f43f5e1a] px-1.5 py-0.5 text-[9px] font-black tracking-wider" style={{ color: '#f43f5e' }}>КРИТИЧНО</span>}
-                          {n.severity === 'warning' && <span className="rounded-md bg-[#fbbf241a] px-1.5 py-0.5 text-[9px] font-black tracking-wider" style={{ color: '#fbbf24' }}>ВАЖНО</span>}
-                          <span className="cp-num ml-auto shrink-0 text-[10px] text-[var(--muted-foreground)]">{relTimeShort(n.time)}</span>
+                          <span className="text-[9px] font-black uppercase tracking-[0.14em]" style={{ color: meta.color }}>{meta.label}</span>
+                          {sevCritical && <span className="rounded-md bg-[#f43f5e1a] px-1.5 py-0.5 text-[9px] font-black tracking-wider" style={{ color: '#f43f5e' }}>КРИТИЧНО</span>}
+                          {sevWarning && <span className="rounded-md bg-[#fbbf241a] px-1.5 py-0.5 text-[9px] font-black tracking-wider" style={{ color: '#fbbf24' }}>ВАЖНО</span>}
+                          <span className="cp-num ml-auto shrink-0 rounded-md bg-[var(--muted)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--muted-foreground)]">{relTimeShort(n.time)}</span>
                         </span>
                         {structured ? (
-                          <span className="mt-1 block">
+                          <span className="mt-1.5 block">
                             {n.type === 'density' ? <DensityBody n={n} large /> : <MovementBody n={n} large />}
                           </span>
                         ) : (
                           <>
-                            <span className="mt-0.5 block text-sm font-bold leading-snug">{n.title}</span>
+                            <span className="mt-1 block text-sm font-bold leading-snug">{n.title}</span>
                             <span className="mt-0.5 block text-xs leading-relaxed text-[var(--muted-foreground)]">{n.message}</span>
                           </>
                         )}
                       </span>
-                      {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--acc)', boxShadow: '0 0 8px var(--acc)' }} />}
+                      {!n.read && <span className="mt-2 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: 'var(--acc)', boxShadow: '0 0 10px var(--acc)' }} />}
                     </motion.button>
                   )
                 })}

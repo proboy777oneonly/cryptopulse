@@ -33,8 +33,9 @@ async function copyText(text: string): Promise<boolean> {
 /**
  * Клик по тикеру — копирование в буфер обмена с короткой вспышкой «✓».
  * inherits текущий шрифт/размер; выглядит как обычный текст.
+ * display — что показывать (напр. базовое имя без USDT), копируется всегда symbol.
  */
-export function TickerCopy({ symbol, className, title }: { symbol: string; className?: string; title?: string }) {
+export function TickerCopy({ symbol, className, title, display }: { symbol: string; className?: string; title?: string; display?: string }) {
   const [copied, setCopied] = useState(false)
   const t = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => () => { if (t.current) clearTimeout(t.current) }, [])
@@ -58,9 +59,19 @@ export function TickerCopy({ symbol, className, title }: { symbol: string; class
           <Check className="h-3 w-3" strokeWidth={3} />
           <span className="sr-only">скопировано</span>
         </span>
-      ) : symbol}
+      ) : (display ?? symbol)}
     </button>
   )
+}
+
+/** BTCUSDT → BTC / USDT; неизвестный квонт возвращается целиком в базе */
+export function splitQuote(symbol: string): { base: string; quote: string } {
+  for (const q of ['USDT', 'USDC', 'BUSD', 'USD']) {
+    if (symbol.length > q.length && symbol.endsWith(q)) {
+      return { base: symbol.slice(0, -q.length), quote: q }
+    }
+  }
+  return { base: symbol, quote: '' }
 }
 
 // ─── Бейдж биржи ──────────────────────────────────────────────────────
@@ -140,7 +151,9 @@ export function AnimatedNumber({ value, format }: { value: number; format?: (v: 
 
 export function FearGreedGauge({ value, size = 150 }: { value: number; size?: number }) {
   const v = Math.max(0, Math.min(100, value))
-  const angle = -90 + (v / 100) * 180
+  // дуга идёт слева (0) через верх (50) направо (100):
+  // стрелка из «базы» вправо → поворот -180° при 0, 0° при 100
+  const angle = -180 + (v / 100) * 180
   const color = v <= 24 ? '#f43f5e' : v <= 44 ? '#fb923c' : v <= 55 ? '#fbbf24' : v <= 74 ? '#a3e635' : '#34d399'
   const r = size / 2 - 10
   const cx = size / 2
@@ -154,8 +167,10 @@ export function FearGreedGauge({ value, size = 150 }: { value: number; size?: nu
     const y2 = cy + r * Math.sin(a2)
     return `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`
   }
-  // деления шкалы
+  // мелкие деления каждые 12.5 + крупные на 0/25/50/75/100
+  const minorTicks = [12.5, 37.5, 62.5, 87.5]
   const ticks = [0, 25, 50, 75, 100]
+  const tip = r - 12
   return (
     <div className="relative flex flex-col items-center" style={{ width: size }}>
       <svg width={size} height={size * 0.62} viewBox={`0 0 ${size} ${size * 0.62}`}>
@@ -167,22 +182,43 @@ export function FearGreedGauge({ value, size = 150 }: { value: number; size?: nu
         <path d={arcPath(45, 55)} fill="none" stroke="#fbbf24" strokeWidth="10" strokeLinecap="round" opacity="0.22" />
         <path d={arcPath(55, 75)} fill="none" stroke="#a3e635" strokeWidth="10" strokeLinecap="round" opacity="0.22" />
         <path d={arcPath(75, 100)} fill="none" stroke="#34d399" strokeWidth="10" strokeLinecap="round" opacity="0.22" />
-        {/* деления */}
+        {/* мелкие деления */}
+        {minorTicks.map((t) => {
+          const a = Math.PI + (t / 100) * Math.PI
+          return (
+            <line
+              key={t}
+              x1={cx + (r - 7) * Math.cos(a)} y1={cy + (r - 7) * Math.sin(a)}
+              x2={cx + (r - 11) * Math.cos(a)} y2={cy + (r - 11) * Math.sin(a)}
+              stroke="var(--muted-foreground)" strokeWidth="1" strokeLinecap="round" opacity="0.35"
+            />
+          )
+        })}
+        {/* крупные деления */}
         {ticks.map((t) => {
           const a = Math.PI + (t / 100) * Math.PI
-          const x1 = cx + (r - 8) * Math.cos(a)
-          const y1 = cy + (r - 8) * Math.sin(a)
+          const x1 = cx + (r - 7) * Math.cos(a)
+          const y1 = cy + (r - 7) * Math.sin(a)
           const x2 = cx + (r - 13) * Math.cos(a)
           const y2 = cy + (r - 13) * Math.sin(a)
-          return <line key={t} x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--muted-foreground)" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" />
+          return <line key={t} x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--muted-foreground)" strokeWidth="1.5" strokeLinecap="round" opacity="0.55" />
         })}
-        <g transform={`rotate(${angle} ${cx} ${cy})`} style={{ transition: 'transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
-          <line x1={cx} y1={cy} x2={cx + r - 14} y2={cy} stroke={color} strokeWidth="3" strokeLinecap="round" style={{ filter: `drop-shadow(0 0 6px ${color})` }} />
-          <circle cx={cx} cy={cy} r="5" fill={color} />
-          <circle cx={cx} cy={cy} r="8" fill="none" stroke={color} strokeWidth="1" opacity="0.4" />
+        {/* подписи краёв шкалы */}
+        <text x={cx - r - 1} y={cy + 13} textAnchor="middle" className="cp-num" fontSize="8.5" fill="var(--muted-foreground)" opacity="0.8">0</text>
+        <text x={cx + r + 1} y={cy + 13} textAnchor="middle" className="cp-num" fontSize="8.5" fill="var(--muted-foreground)" opacity="0.8">100</text>
+        {/* стрелка: сужающееся остриё + противовес */}
+        <g transform={`rotate(${angle} ${cx} ${cy})`} style={{ transition: 'transform 0.9s cubic-bezier(0.34, 1.4, 0.64, 1)' }}>
+          <path
+            d={`M ${cx + tip} ${cy} L ${cx - 9} ${cy - 3} L ${cx - 12} ${cy} L ${cx - 9} ${cy + 3} Z`}
+            fill={color}
+            stroke={color}
+            strokeWidth="0.5"
+            style={{ filter: `drop-shadow(0 0 5px ${color}aa)` }}
+          />
+          <circle cx={cx} cy={cy} r="4.5" fill="var(--card-solid)" stroke={color} strokeWidth="2" />
         </g>
       </svg>
-      <div className="-mt-2 flex flex-col items-center">
+      <div className="-mt-1.5 flex flex-col items-center">
         <span className="cp-num text-3xl font-black" style={{ color, textShadow: `0 0 18px ${color}66` }}>{Math.round(v)}</span>
       </div>
     </div>

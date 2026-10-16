@@ -5,7 +5,7 @@
 
 import {
   comboId, EX_COMBO, jget,
-  type Combo, type Ex, type Mkt, type MoverRow, type RawTicker, type SpreadRow, type TickerRow,
+  type BestRow, type Combo, type Ex, type Mkt, type MoverRow, type RawTicker, type SpreadRow, type SpreadSets, type TickerRow,
 } from './types'
 
 // ─── Утилиты ─────────────────────────────────────────────────────────
@@ -354,41 +354,62 @@ export class TickerHub {
     }
   }
 
-  /** Межбиржевые спреды для режима F и S */
-  spreads(): { F: SpreadRow[]; S: SpreadRow[] } {
-    const res: { F: SpreadRow[]; S: SpreadRow[] } = { F: [], S: [] }
-    for (const mode of ['F', 'S'] as Mkt[]) {
-      const bySymbol = new Map<string, Map<Ex, TickerRow>>()
-      for (const p of this.pollers) {
-        if (p.combo.m !== mode) continue
-        const fresh = Date.now() - p.lastOk < 90_000
-        if (!fresh && p.rows.size === 0) continue
-        for (const t of p.rows.values()) {
-          if (t.vol24h < 5e6) continue
-          let perEx = bySymbol.get(t.symbol)
-          if (!perEx) { perEx = new Map(); bySymbol.set(t.symbol, perEx) }
-          perEx.set(t.ex, t)
+  /** Межбиржевые спреды: 4 режима — F-F, F-S, S-F, S-S (покупка → продажа) */
+  spreads(): SpreadSets {
+    // для каждого рынка: symbol → лучшие цены по всем биржам
+    const byMkt: Record<Mkt, Map<string, BestRow>> = { F: new Map(), S: new Map() }
+    for (const p of this.pollers) {
+      const fresh = Date.now() - p.lastOk < 90_000
+      if (!fresh && p.rows.size === 0) continue
+      const map = byMkt[p.combo.m]
+      for (const t of p.rows.values()) {
+        if (t.vol24h < 5e6 || t.price <= 0) continue
+        let b = map.get(t.symbol)
+        if (!b) {
+          map.set(t.symbol, { minEx: t.ex, minP: t.price, maxEx: t.ex, maxP: t.price, vol: t.vol24h, exs: 1 })
+          continue
         }
+        if (t.price < b.minP) { b.minEx = t.ex; b.minP = t.price }
+        if (t.price > b.maxP) { b.maxEx = t.ex; b.maxP = t.price }
+        if (t.vol24h > b.vol) b.vol = t.vol24h
+        b.exs += 1
       }
-      const out: SpreadRow[] = []
-      for (const [symbol, perEx] of bySymbol) {
-        if (perEx.size < 2) continue
-        let minP = Infinity, maxP = -Infinity
-        let minEx: Ex | null = null, maxEx: Ex | null = null
-        let vol = 0
-        for (const [ex, t] of perEx) {
-          if (t.price <= 0) continue
-          if (t.price < minP) { minP = t.price; minEx = ex }
-          if (t.price > maxP) { maxP = t.price; maxEx = ex }
-          vol = Math.max(vol, t.vol24h)
-        }
-        if (!minEx || !maxEx || minEx === maxEx || minP <= 0) continue
-        const spreadPct = ((maxP - minP) / minP) * 100
-        if (spreadPct < 0.08 || spreadPct > 60) continue
-        out.push({ symbol, buyEx: minEx, buyPrice: minP, sellEx: maxEx, sellPrice: maxP, spreadPct: Math.round(spreadPct * 100) / 100, vol24h: vol })
-      }
-      res[mode] = out.sort((a, b) => b.spreadPct - a.spreadPct).slice(0, 80)
     }
+
+    const push = (out: SpreadRow[], symbol: string, buy: BestRow, sell: BestRow, sameExOk: boolean) => {
+      if (buy.minP <= 0) return
+      if (!sameExOk && buy.minEx === sell.maxEx) return
+      const spreadPct = ((sell.maxP - buy.minP) / buy.minP) * 100
+      if (spreadPct < 0.08 || spreadPct > 60) return
+      out.push({
+        symbol,
+        buyEx: buy.minEx, buyPrice: buy.minP,
+        sellEx: sell.maxEx, sellPrice: sell.maxP,
+        spreadPct: Math.round(spreadPct * 100) / 100,
+        vol24h: Math.max(buy.vol, sell.vol),
+      })
+    }
+
+    const res: SpreadSets = { FF: [], FS: [], SF: [], SS: [] }
+    // F-F и S-S: одна и та же карта, нужны ≥2 биржи
+    for (const m of ['F', 'S'] as Mkt[]) {
+      const out = m === 'F' ? res.FF : res.SS
+      for (const [symbol, b] of byMkt[m]) {
+        if (b.exs < 2) continue
+        push(out, symbol, b, b, false)
+      }
+    }
+    // кросс-рынки: символ должен быть на обоих; одна биржа допустима (базис)
+    for (const [symbol, f] of byMkt.F) {
+      const s = byMkt.S.get(symbol)
+      if (!s) continue
+      push(res.FS, symbol, f, s, true) // покупка F → продажа S
+      push(res.SF, symbol, s, f, true) // покупка S → продажа F
+    }
+    res.FF.sort((a, b) => b.spreadPct - a.spreadPct).slice(0, 80)
+    res.SS.sort((a, b) => b.spreadPct - a.spreadPct).slice(0, 80)
+    res.FS.sort((a, b) => b.spreadPct - a.spreadPct).slice(0, 80)
+    res.SF.sort((a, b) => b.spreadPct - a.spreadPct).slice(0, 80)
     return res
   }
 

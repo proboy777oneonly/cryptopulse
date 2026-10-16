@@ -8,9 +8,21 @@ import { Label } from '@/components/ui/label'
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import { useUi } from '@/stores/ui-store'
-import { EXCHANGES, EX_MAP, fmtPrice, fmtUsd } from '@/engines/types'
+import { EXCHANGES, EX_MAP, arbModeMeta, fmtPrice, fmtUsd, normalizeArbMode } from '@/engines/types'
 import { EmptyState, ExBadge, TickerCopy } from '@/components/ui-bits'
 import { cn } from '@/lib/utils'
+
+/** Мини-бейдж рынка на ноге арбитража */
+function MktChip({ m }: { m: 'F' | 'S' }) {
+  return (
+    <span
+      className="shrink-0 rounded px-1 py-0.5 text-[8px] font-black"
+      style={{ background: m === 'F' ? '#f59e0b1e' : '#22d3ee1e', color: m === 'F' ? '#f59e0b' : '#22d3ee' }}
+    >
+      {m}
+    </span>
+  )
+}
 
 export function ArbitrageView() {
   const arbitrage = useApp((s) => s.arbitrage)
@@ -22,6 +34,9 @@ export function ArbitrageView() {
     const q = arbQuery.trim().toUpperCase()
     return q === '' ? opps : opps.filter((o) => o.symbol.includes(q))
   }, [opps, arbQuery])
+
+  const mode = normalizeArbMode(arbitrage.mode)
+  const modeMeta = arbModeMeta(mode)
 
   const maxSpread = useMemo(() => Math.max(...filtered.map((o) => o.spreadPct), 1), [filtered])
   const avgSpread = filtered.length > 0
@@ -121,7 +136,8 @@ export function ArbitrageView() {
           </div>
 
           <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--muted)] p-3 text-[10px] leading-relaxed text-[var(--muted-foreground)]">
-            Сканер сравнивает цены одной монеты на выбранных биржах каждые 6 секунд.
+            Сканер сравнивает цены одной монеты на выбранных биржах каждые 6 секунд. Режимы:
+            F-F и S-S — внутри одного рынка, F-S / S-F — кросс-рынок (в т.ч. базис на одной бирже).
             Учитывайте комиссии вывода и перевода — чистый спред ниже биржевого.
           </div>
         </div>
@@ -136,7 +152,7 @@ export function ArbitrageView() {
               {filtered.length} активных
             </span>
             <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">
-              режим: {arbitrage.mode === 'F' ? 'фьючерсы' : 'спот'} · спред ≥ {arbitrage.minSpreadPct}%
+              {modeMeta.desc} · спред ≥ {arbitrage.minSpreadPct}%
             </span>
           </div>
 
@@ -174,13 +190,15 @@ export function ArbitrageView() {
                         {top && <Crown className="h-3 w-3 shrink-0" style={{ color: 'var(--pos)', opacity: 1 - i * 0.25 }} />}
                         <TickerCopy symbol={o.symbol} className="min-w-0 truncate text-sm font-black" />
                       </span>
-                      <span className="flex min-w-0 items-center gap-2 text-xs">
+                      <span className="flex min-w-0 items-center gap-1.5 text-xs">
                         <ExBadge ex={o.buyExchange} size="sm" />
+                        <MktChip m={o.buyMarket} />
                         <span className="cp-num hidden font-semibold md:block">{fmtPrice(o.buyPrice)}</span>
                       </span>
-                      <span className="flex min-w-0 items-center gap-2 text-xs">
+                      <span className="flex min-w-0 items-center gap-1.5 text-xs">
                         <ArrowRight className="h-3 w-3 shrink-0 text-[var(--muted-foreground)]" />
                         <ExBadge ex={o.sellExchange} size="sm" />
+                        <MktChip m={o.sellMarket} />
                         <span className="cp-num hidden font-semibold md:block">{fmtPrice(o.sellPrice)}</span>
                       </span>
                       <span className="text-right">

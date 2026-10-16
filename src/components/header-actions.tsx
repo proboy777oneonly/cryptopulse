@@ -12,7 +12,7 @@ import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import { useUi } from '@/stores/ui-store'
 import { clearNotifications, markAllRead } from '@/stores/live-store'
-import { EX_MAP, type ExchangeId } from '@/engines/types'
+import { EX_MAP, ARB_MODES, type ExchangeId, normalizeArbMode } from '@/engines/types'
 import { toastSuccess } from '@/engines/notifier'
 import { cn } from '@/lib/utils'
 
@@ -246,25 +246,26 @@ function ArbitrageActions() {
   const updateArbitrage = useApp((s) => s.updateArbitrage)
   const { arbQuery, setArbQuery } = useUi()
   const best = opps.length > 0 ? opps[0] : null
+  const mode = normalizeArbMode(arbitrage.mode)
   return (
     <>
       <ChipStat dot>{opps.length} спредов</ChipStat>
       {best && <ChipStat color="var(--pos)">лучший {best.spreadPct.toFixed(2)}%</ChipStat>}
       <div className="flex h-9 shrink-0 items-center gap-0.5 rounded-xl border border-[var(--border)] bg-[var(--muted)] p-0.5">
-        {(['F', 'S'] as const).map((m) => (
+        {ARB_MODES.map((m) => (
           <button
-            key={m}
-            onClick={() => updateArbitrage({ mode: m })}
+            key={m.id}
+            onClick={() => updateArbitrage({ mode: m.id })}
             className={cn(
-              'flex h-8 items-center justify-center rounded-lg px-3 text-[11px] font-black transition-all',
-              arbitrage.mode === m ? 'text-white' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+              'cp-num flex h-8 items-center justify-center rounded-lg px-2.5 text-[11px] font-black transition-all',
+              mode === m.id ? 'text-white' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
             )}
-            style={arbitrage.mode === m
-              ? { background: m === 'F' ? 'linear-gradient(135deg,#f59e0b,#f97316)' : 'linear-gradient(135deg,#22d3ee,#06b6d4)' }
+            style={mode === m.id
+              ? { background: m.buy === 'F' || m.sell === 'F' ? 'linear-gradient(135deg,#f59e0b,#f97316)' : 'linear-gradient(135deg,#22d3ee,#06b6d4)' }
               : undefined}
-            aria-pressed={arbitrage.mode === m}
+            aria-pressed={mode === m.id}
           >
-            {m === 'F' ? 'ФЬЮЧЕРСЫ' : 'СПОТ'}
+            {m.label}
           </button>
         ))}
       </div>

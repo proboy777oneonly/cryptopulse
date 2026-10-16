@@ -12,7 +12,7 @@ import { HlWs } from './hl-ws'
 import { ListingsEngine, type ListingEvent } from './listings'
 import { NewsEngine, fetchFearGreed, type FgData } from './news'
 import { collectStats } from './telemetry'
-import { type ConnectRow, type MoverRow, type NewsItem, type ServiceStats, type WallRow } from './types'
+import { type ConnectRow, type MoverRow, type NewsItem, type ServiceStats, type SpreadSets, type WallRow } from './types'
 
 const PORT = 3003
 
@@ -108,11 +108,11 @@ setInterval(() => {
   io.emit('top', tickerHub.topLists())
 }, 15_000)
 
-// спреды — каждые 6 секунд
+// спреды — каждые 6 секунд (4 режима: F-F, F-S, S-F, S-S)
 setInterval(() => {
   if (!hasClients()) return
-  const spreads = tickerHub.spreads()
-  state.spreads = spreads.F.length + spreads.S.length
+  const spreads: SpreadSets = tickerHub.spreads()
+  state.spreads = spreads.FF.length + spreads.FS.length + spreads.SF.length + spreads.SS.length
   io.emit('spreads', spreads)
 }, 6000)
 
@@ -169,7 +169,7 @@ io.on('connection', (socket) => {
   console.log(`[WS+] client ${socket.id}, total ${io.engine.clientsCount}`)
 
   socket.emit('hello', {
-    service: { version: '3.3.0', startedAt: state.startedAt },
+    service: { version: '3.4.0', startedAt: state.startedAt },
     fg: state.fg,
     news: newsEngine.items,
     listings: listingsEngine.items.map(toClientListing),
@@ -198,8 +198,8 @@ io.on('connection', (socket) => {
 
 async function main() {
   console.log('════════════════════════════════════════════════')
-  console.log('  CryptoPulse Market Service v3.3.0')
-  console.log(`  port ${PORT} · 8 exchanges · F+S · real data · listings`)
+  console.log('  CryptoPulse Market Service v3.4.0')
+  console.log(`  port ${PORT} · 8 exchanges · F+S · real data · arb 4 modes`)
   console.log('════════════════════════════════════════════════')
 
   tickerHub.start()

@@ -625,8 +625,6 @@ function DensityWindowCard({ win, compact }: { win: DensityWindowConfig; compact
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tickersOpen, setTickersOpen] = useState(false)
   const [blacklistOpen, setBlacklistOpen] = useState(false)
-  const [sendFor, setSendFor] = useState<string | null>(null)
-  const [sendTargets, setSendTargets] = useState<Record<string, boolean>>({})
 
   const meta = EX_MAP[win.exchange]
   const filtered = useMemo(
@@ -699,7 +697,7 @@ function DensityWindowCard({ win, compact }: { win: DensityWindowConfig; compact
         ) : (
           <div className="space-y-1">
             {filtered.slice(0, 14).map((e) => (
-              <DensityRow key={e.id} e={e} compact={compact} tiers={win.volTiers} onSend={() => { setSendFor(e.symbol); setSendTargets({}) }} />
+              <DensityRow key={e.id} e={e} compact={compact} tiers={win.volTiers} />
             ))}
             {filtered.length > 14 && (
               <div className="py-1 text-center text-[10px] text-[var(--muted-foreground)]">+{filtered.length - 14} ещё</div>
@@ -711,40 +709,11 @@ function DensityWindowCard({ win, compact }: { win: DensityWindowConfig; compact
       <WindowSettingsDialog win={win} open={settingsOpen} onOpenChange={setSettingsOpen} />
       <TickersDialog win={win} open={tickersOpen} onOpenChange={setTickersOpen} />
       <BlacklistDialog win={win} open={blacklistOpen} onOpenChange={setBlacklistOpen} />
-
-      {/* Быстрая отправка тикера из строки */}
-      <Dialog open={!!sendFor} onOpenChange={(v) => { if (!v) { setSendFor(null); setSendTargets({}) } }}>
-        <DialogContent className="max-w-sm rounded-3xl border-[var(--border)] bg-[var(--card-solid)]">
-          <DialogHeader>
-            <DialogTitle className="text-base">Отправить {sendFor} в окна</DialogTitle>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-1.5">
-            {densityWindows.filter((w) => w.id !== win.id).map((w) => (
-              <label key={w.id} className="flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--border)] px-2.5 py-2 text-xs font-semibold">
-                <Checkbox checked={!!sendTargets[w.id]} onCheckedChange={(v) => setSendTargets((p) => ({ ...p, [w.id]: !!v }))} />
-                {EX_MAP[w.exchange].name}
-              </label>
-            ))}
-          </div>
-          <Button
-            disabled={Object.values(sendTargets).every((v) => !v)}
-            onClick={() => {
-              const targets = Object.entries(sendTargets).filter(([, v]) => v).map(([k]) => k)
-              useApp.getState().sendTicker(win.id, sendFor!, targets)
-              toastSuccess('Тикер отправлен', `${sendFor} добавлен в ${targets.length} окон`)
-              setSendFor(null)
-              setSendTargets({})
-            }}
-          >
-            <Send className="mr-2 h-4 w-4" /> Отправить
-          </Button>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
 
-function DensityRow({ e, compact, onSend, tiers }: { e: DensityEvent; compact: boolean; onSend: () => void; tiers: VolumeTier[] | undefined }) {
+function DensityRow({ e, compact, tiers }: { e: DensityEvent; compact: boolean; tiers: VolumeTier[] | undefined }) {
   // подписка на тик — обновляет возраст только этой строки, без ререндера окна
   const tick = useLive((s) => s.tick)
   void tick
@@ -787,13 +756,6 @@ function DensityRow({ e, compact, onSend, tiers }: { e: DensityEvent; compact: b
       >
         <Hourglass className="h-2.5 w-2.5" />{fmtAge(ageMs)}
       </span>
-      <button
-        onClick={onSend}
-        className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card-solid)] text-[var(--muted-foreground)] opacity-0 shadow-md transition-all group-hover:opacity-100 hover:text-[var(--acc)]"
-        aria-label="Отправить тикер в другие окна"
-      >
-        <Send className="h-3 w-3" />
-      </button>
     </motion.div>
   )
 }

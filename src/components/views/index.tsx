@@ -2,6 +2,7 @@
 
 import { useApp, type ViewId } from '@/stores/app-store'
 import { HomeView } from './home'
+import { MarketView } from './market'
 import { DensitiesView } from './densities'
 import { ArbitrageView } from './arbitrage'
 import { MovementsView } from './movements'
@@ -15,6 +16,8 @@ export function ViewsRouter() {
   const role = useApp((s) => s.user?.role)
 
   switch (view) {
+    case 'market':
+      return <MarketView />
     case 'densities':
       return <DensitiesView />
     case 'arbitrage':

@@ -1,10 +1,10 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type {
-  ArbitrageConfig, DensityMode, DensityTickerOverride, DensityWindowConfig,
+  ArbitrageConfig, ArbMode, DensityMode, DensityTickerOverride, DensityWindowConfig,
   MovementWindowConfig, NotifType,
 } from '@/engines/types'
-import { DEFAULT_VOL_TIERS, EXCHANGES, uid } from '@/engines/types'
+import { DEFAULT_VOL_TIERS, EXCHANGES, normalizeArbMode, uid } from '@/engines/types'
 
 export type ThemeId = 'midnight' | 'terminal' | 'sunset' | 'crystal'
 
@@ -48,7 +48,7 @@ export interface EffectsPrefs {
   compact: boolean
 }
 
-export type ViewId = 'home' | 'densities' | 'arbitrage' | 'movements' | 'news' | 'listings' | 'notifications' | 'monitor' | 'users' | 'settings'
+export type ViewId = 'home' | 'market' | 'densities' | 'arbitrage' | 'movements' | 'news' | 'listings' | 'notifications' | 'monitor' | 'users' | 'settings'
 
 export interface AppState {
   user: SessionUser | null
@@ -145,10 +145,15 @@ function defaultArbitrage(): ArbitrageConfig {
   return {
     minSpreadPct: 0.6,
     minVol24h: 10e6,
-    mode: 'F',
+    mode: 'FF' as ArbMode,
     cooldownSec: 120,
     exchanges: Object.fromEntries(EXCHANGES.map((e) => [e.id, true])) as Record<string, boolean> as ArbitrageConfig['exchanges'],
   }
+}
+
+/** Старый режим 'F'/'S' → новый FF/SS; невалидное → FF */
+function withArbMode(a: ArbitrageConfig): ArbitrageConfig {
+  return { ...a, mode: normalizeArbMode(a?.mode) }
 }
 
 export function defaultState() {
@@ -321,7 +326,7 @@ export const useApp = create<AppState>()(
           movementWindows: Array.isArray(data.movementWindows) && data.movementWindows.length > 0
             ? withMovementNames(data.movementWindows as MovementWindowConfig[])
             : d.movementWindows,
-          arbitrage: data.arbitrage ? { ...d.arbitrage, ...(data.arbitrage as ArbitrageConfig) } : d.arbitrage,
+          arbitrage: data.arbitrage ? withArbMode({ ...d.arbitrage, ...(data.arbitrage as ArbitrageConfig) }) : d.arbitrage,
         })
       },
 
@@ -349,6 +354,7 @@ export const useApp = create<AppState>()(
           movementWindows: Array.isArray(p.movementWindows) && p.movementWindows.length > 0
             ? withMovementNames(p.movementWindows)
             : current.movementWindows,
+          arbitrage: p.arbitrage ? withArbMode({ ...current.arbitrage, ...p.arbitrage }) : current.arbitrage,
         }
       },
     },

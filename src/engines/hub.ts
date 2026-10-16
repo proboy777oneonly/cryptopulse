@@ -5,7 +5,7 @@ import { emitNotification } from './notifier'
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import {
-  exName, fmtUsd, uid,
+  arbModeMeta, exName, fmtUsd, normalizeArbMode, uid,
   type ConnectRow, type DensityEvent, type ExchangeId, type ListingEvent, type MarketType, type MovementAlert,
   type NewsItem, type ServiceStats, type SpreadRow, type SymbolRow, type TickerSnapshot,
 } from './types'
@@ -64,6 +64,13 @@ interface ArbKeyState {
   spreadPct: number
   vol24h: number
   time: number
+}
+
+interface ArbSpreadSets {
+  FF: SpreadRow[]
+  FS: SpreadRow[]
+  SF: SpreadRow[]
+  SS: SpreadRow[]
 }
 
 interface TranslateReq {
@@ -157,7 +164,7 @@ export class EngineHub {
     socket.on('movers', (rows: MoverRow[]) => this.handleMovers(rows))
     socket.on('top', (d: { gainers: MoverRow[]; losers: MoverRow[] }) => this.applyTop(d))
     socket.on('walls', (rows: WallRow[]) => this.handleWalls(rows))
-    socket.on('spreads', (d: { F: SpreadRow[]; S: SpreadRow[] }) => this.handleSpreads(d))
+    socket.on('spreads', (d: ArbSpreadSets) => this.handleSpreads(d))
     socket.on('fg', (d: FgPayload) => {
       useLive.setState({ fearGreed: { value: d.value, history: d.history, source: 'live', yesterday: d.yesterday, lastWeek: d.lastWeek, lastMonth: d.lastMonth } })
     })
@@ -434,13 +441,15 @@ export class EngineHub {
 
   // ── Арбитраж: спреды с сервера → фильтры пользователя ─────────────
 
-  private handleSpreads(data: { F: SpreadRow[]; S: SpreadRow[] }) {
+  private handleSpreads(data: ArbSpreadSets) {
     const cfg = useApp.getState().arbitrage
+    const mode = normalizeArbMode(cfg.mode)
+    const { buy, sell } = arbModeMeta(mode)
     const now = Date.now()
     const seen = new Set<string>()
     const active = new Map<string, ArbKeyState>()
     // индекс «символ_биржа» → цена (вместо O(n²) поиска по массиву на каждую строку)
-    const rows = data[cfg.mode] ?? []
+    const rows = data[mode] ?? []
     const rowBySym = new Map<string, number>()
     for (const r of rows) {
       rowBySym.set(`${r.symbol}_${r.buyEx}`, r.buyPrice)
@@ -450,7 +459,7 @@ export class EngineHub {
     for (const r of rows) {
       if (!cfg.exchanges[r.buyEx] || !cfg.exchanges[r.sellEx]) continue
       if (r.spreadPct < cfg.minSpreadPct || r.vol24h < cfg.minVol24h) continue
-      const key = `${r.symbol}_${r.buyEx}_${r.sellEx}`
+      const key = `${mode}_${r.symbol}_${r.buyEx}_${r.sellEx}`
       seen.add(key)
       const existing = this.arbActive.get(key)
       if (existing) {
@@ -470,10 +479,11 @@ export class EngineHub {
           type: 'arbitrage',
           severity: r.spreadPct >= 1.5 ? 'warning' : 'info',
           title: `${r.symbol} · спред ${r.spreadPct.toFixed(2)}%`,
-          message: `Покупка ${exName(r.buyEx)} → продажа ${exName(r.sellEx)} · оборот 24ч ${fmtUsd(r.vol24h)}`,
+          message: `Покупка ${buy} ${exName(r.buyEx)} → продажа ${sell} ${exName(r.sellEx)} · оборот 24ч ${fmtUsd(r.vol24h)}`,
           ticker: r.symbol,
           spreadPct: r.spreadPct,
           exchange: r.buyEx,
+          market: buy,
           vol24h: r.vol24h,
           voiceText: voiceTextArbitrage(r.symbol, r.spreadPct),
         })
@@ -490,9 +500,10 @@ export class EngineHub {
       .sort((a, b) => b.spreadPct - a.spreadPct)
       .slice(0, 40)
       .map((o) => ({
-        id: `${o.symbol}_${o.buyExchange}_${o.sellExchange}`,
+        id: `${mode}_${o.symbol}_${o.buyExchange}_${o.sellExchange}`,
         symbol: o.symbol,
-        market: cfg.mode,
+        buyMarket: buy,
+        sellMarket: sell,
         buyExchange: o.buyExchange,
         buyPrice: rowBySym.get(`${o.symbol}_${o.buyExchange}`) ?? 0,
         sellExchange: o.sellExchange,

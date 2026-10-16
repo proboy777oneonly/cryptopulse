@@ -178,10 +178,31 @@ export interface MovementAlert {
 
 // ─── Арбитраж ─────────────────────────────────────────────────────────
 
+/** Режим арбитража: рынок покупки → рынок продажи */
+export type ArbMode = 'FF' | 'FS' | 'SF' | 'SS'
+
+export const ARB_MODES: { id: ArbMode; label: string; buy: MarketType; sell: MarketType; desc: string }[] = [
+  { id: 'FF', label: 'F-F', buy: 'F', sell: 'F', desc: 'фьючерсы → фьючерсы' },
+  { id: 'FS', label: 'F-S', buy: 'F', sell: 'S', desc: 'покупка фьючерс → продажа спот' },
+  { id: 'SF', label: 'S-F', buy: 'S', sell: 'F', desc: 'покупка спот → продажа фьючерс' },
+  { id: 'SS', label: 'S-S', buy: 'S', sell: 'S', desc: 'спот → спот' },
+]
+
+export function arbModeMeta(m: ArbMode): { buy: MarketType; sell: MarketType; desc: string } {
+  return ARB_MODES.find((x) => x.id === m) ?? ARB_MODES[0]
+}
+
+/** Нормализация старых режимов 'F'/'S' из localStorage */
+export function normalizeArbMode(m: unknown): ArbMode {
+  if (m === 'FS' || m === 'SF' || m === 'SS') return m
+  if (m === 'S') return 'SS'
+  return 'FF'
+}
+
 export interface ArbitrageConfig {
   minSpreadPct: number
   minVol24h: number
-  mode: MarketType
+  mode: ArbMode
   cooldownSec: number
   exchanges: Record<ExchangeId, boolean>
 }
@@ -189,7 +210,8 @@ export interface ArbitrageConfig {
 export interface ArbOpportunity {
   id: string
   symbol: string
-  market: MarketType
+  buyMarket: MarketType
+  sellMarket: MarketType
   buyExchange: ExchangeId
   buyPrice: number
   sellExchange: ExchangeId
