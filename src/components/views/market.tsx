@@ -1,14 +1,14 @@
 'use client'
 
 // ════════════════════════════════════════════════════════════════════
-// Вкладка «Обзор рынка»: графики + тикеры, 3 биржи (BINANCE/BYBIT/OKX),
-// автоварьировка тикера с наибольшим объёмом 24ч на бирже,
-// рисовалки на графике и линейка на колёсико мыши.
+// Вкладка «Обзор рынка»: график с рисовалками (вертикально слева) и
+// таймфреймами (сверху по центру); справа — выбор биржи BINANCE/BYBIT/OKX,
+// рынок F/S и список монет с автоварьировкой топ-объёма 24ч.
 // ════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  CandlestickChart, ChevronDown, MousePointer2, MoveHorizontal, MoveVertical, RotateCcw,
+  ChevronDown, MousePointer2, MoveHorizontal, MoveVertical, RotateCcw,
   Ruler, Search, Sigma, Slash, Square, Trash2,
 } from 'lucide-react'
 import { useApp } from '@/stores/app-store'
@@ -160,16 +160,20 @@ function SymbolPicker({ rows, value, onSelect }: { rows: SymbolRow[]; value: str
   )
 }
 
-// ─── Список монет ──────────────────────────────────────────────────────
+// ─── Правая колонка: биржа · рынок · список монет ──────────────────────
 
 function CoinsPanel({
-  rows, tickers, selected, onSelect, exKey,
+  rows, tickers, selected, onSelect, exKey, ex, m, onEx, onM,
 }: {
   rows: SymbolRow[]
   tickers: Record<string, TickerSnapshot>
   selected: string
   onSelect: (s: string) => void
   exKey: string
+  ex: Ex3
+  m: Mkt
+  onEx: (e: Ex3) => void
+  onM: (mm: Mkt) => void
 }) {
   const [q, setQ] = useState('')
   const list = useMemo(() => {
@@ -179,13 +183,48 @@ function CoinsPanel({
 
   return (
     <div className="cp-border-glow flex min-h-0 flex-1 flex-col rounded-2xl bg-card">
-      <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-3.5 py-2.5">
-        <h3 className="flex items-center gap-2 text-sm font-bold">
-          <CandlestickChart className="h-4 w-4" style={{ color: 'var(--acc)' }} />
-          Монеты
-          <span className="cp-num rounded-md bg-[var(--muted)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--muted-foreground)]">{rows.length}</span>
-        </h3>
+      {/* биржи + рынок — вместо прежнего заголовка «Монеты» */}
+      <div className="flex flex-col gap-1.5 border-b border-[var(--border)] p-2.5">
+        <div className="grid grid-cols-3 gap-1.5">
+          {EX3.map((e) => {
+            const active = ex === e.id
+            return (
+              <button
+                key={e.id}
+                onClick={() => onEx(e.id)}
+                className={cn(
+                  'flex h-9 items-center justify-center gap-1.5 rounded-lg border text-[10px] font-black tracking-tight transition-all',
+                  active
+                    ? 'text-[var(--foreground)]'
+                    : 'border-transparent bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+                )}
+                style={active ? { background: `${e.color}1f`, borderColor: `${e.color}66` } : undefined}
+                aria-pressed={active}
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: e.color }} />
+                {e.name.toUpperCase()}
+              </button>
+            )
+          })}
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          {(['F', 'S'] as Mkt[]).map((mm) => (
+            <button
+              key={mm}
+              onClick={() => onM(mm)}
+              className={cn(
+                'flex h-9 items-center justify-center rounded-lg text-[10px] font-black transition-all',
+                m === mm ? 'text-white' : 'bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+              )}
+              style={m === mm ? { background: mm === 'F' ? 'linear-gradient(135deg,#f59e0b,#f97316)' : 'linear-gradient(135deg,#22d3ee,#06b6d4)' } : undefined}
+              aria-pressed={m === mm}
+            >
+              {mm === 'F' ? 'ФЬЮЧЕРСЫ' : 'СПОТ'}
+            </button>
+          ))}
+        </div>
       </div>
+      {/* поиск */}
       <div className="px-2.5 pt-2.5">
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
@@ -269,13 +308,11 @@ export function MarketView() {
   const [symbol, setSymbol] = useState('')
   const [interval, setIntervalId] = useState('15m')
   const [candles, setCandles] = useState<Candle[]>([])
-  const [mini, setMini] = useState<Candle[]>([])
   const [symbols, setSymbols] = useState<SymbolRow[]>([])
   const [loadedKey, setLoadedKey] = useState('')
   const [tool, setTool] = useState<ChartTool>('cursor')
   const [clearTick, setClearTick] = useState(0)
   const [reload, setReload] = useState(0)
-  const [miniReload, setMiniReload] = useState(0)
 
   const exMeta = EX3.find((e) => e.id === ex) ?? EX3[0]
   const selKey = `${ex}_${m}`
@@ -325,28 +362,12 @@ export function MarketView() {
     return () => { cancel = true }
   }, [ex, m, symbol, interval, reqKey, reload])
 
-  // ── Мини-график 1м ────────────────────────────────────────────────
-  useEffect(() => {
-    if (!symbol) return
-    let cancel = false
-    fetchRetry(`/api/klines?ex=${ex}&m=${m}&symbol=${symbol}&interval=1m&limit=160`, 2, 2000)
-      .then(async (r) => (r.ok ? ((await r.json()) as { candles?: Candle[] }) : { candles: [] }))
-      .then((d) => { if (!cancel) setMini(d.candles ?? []) })
-      .catch(() => { if (!cancel) setMini([]) })
-    return () => { cancel = true }
-  }, [ex, m, symbol, miniReload])
-
-  // автообновление: короткие ТФ — 30с, длинные — 120с; мини — 20с
+  // автообновление: короткие ТФ — 30с, длинные — 120с
   useEffect(() => {
     const fast = interval === '1m' || interval === '5m' || interval === '15m'
     const t = setTimeout(() => setReload((v) => v + 1), fast ? 30_000 : 120_000)
     return () => clearTimeout(t)
   }, [interval, reload])
-
-  useEffect(() => {
-    const t = setTimeout(() => setMiniReload((v) => v + 1), 20_000)
-    return () => clearTimeout(t)
-  }, [miniReload])
 
   // ── Живая цена выбранного тикера ──────────────────────────────────
   const live = tickers[`${ex}:${m}:${symbol}`]
@@ -365,47 +386,12 @@ export function MarketView() {
 
   const chartKey = `${ex}|${m}|${symbol}|${interval}`
   const { base, quote } = splitQuote(symbol)
+  const ivLabel = INTERVALS.find((iv) => iv.id === interval)?.label ?? interval
 
   return (
     <div className="flex h-[calc(100dvh-113px)] min-h-[560px] flex-col gap-3">
-      {/* ── Верхняя панель: биржи · рынок · тикер · цена ───────────── */}
+      {/* ── Верхняя панель: тикер · цена ───────────────────────────── */}
       <div className="cp-border-glow flex flex-wrap items-center gap-2 rounded-2xl bg-card px-3 py-2.5">
-        {/* биржи */}
-        <div className="flex items-center gap-0.5 rounded-xl border border-[var(--border)] bg-[var(--muted)] p-0.5">
-          {EX3.map((e) => (
-            <button
-              key={e.id}
-              onClick={() => setEx(e.id)}
-              className={cn(
-                'flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-black transition-all',
-                ex === e.id ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
-              )}
-              style={ex === e.id ? { background: `${e.color}22`, boxShadow: `inset 0 0 0 1px ${e.color}55` } : undefined}
-              aria-pressed={ex === e.id}
-            >
-              <span className="h-1.5 w-1.5 rounded-full" style={{ background: e.color }} />
-              {e.name.toUpperCase()}
-            </button>
-          ))}
-        </div>
-        {/* рынок */}
-        <div className="flex h-10 items-center gap-0.5 rounded-xl border border-[var(--border)] bg-[var(--muted)] p-0.5">
-          {(['F', 'S'] as Mkt[]).map((mm) => (
-            <button
-              key={mm}
-              onClick={() => setM(mm)}
-              className={cn(
-                'flex h-9 items-center justify-center rounded-lg px-3 text-[11px] font-black transition-all',
-                m === mm ? 'text-white' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
-              )}
-              style={m === mm ? { background: mm === 'F' ? 'linear-gradient(135deg,#f59e0b,#f97316)' : 'linear-gradient(135deg,#22d3ee,#06b6d4)' } : undefined}
-              aria-pressed={m === mm}
-            >
-              {mm === 'F' ? 'ФЬЮЧЕРСЫ' : 'СПОТ'}
-            </button>
-          ))}
-        </div>
-        {/* тикер */}
         <SymbolPicker rows={symbols} value={symbol} onSelect={selectSymbol} />
         {/* цена */}
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -430,112 +416,94 @@ export function MarketView() {
 
       {/* ── Основная область ────────────────────────────────────────── */}
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
-        {/* график + тулбар */}
-        <div className="flex min-h-[340px] flex-1 flex-col gap-2">
-          {/* тулбар: рисовалки · таймфреймы · сброс */}
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-0.5 rounded-xl border border-[var(--border)] bg-[var(--muted)] p-0.5">
-              {TOOLS.map((t) => {
-                const Icon = t.icon
-                const active = tool === t.id
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => setTool(t.id)}
-                    aria-label={t.label}
-                    aria-pressed={active}
-                    className={cn(
-                      'flex h-8 w-8 items-center justify-center rounded-lg transition-all',
-                      active ? 'text-white' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
-                    )}
-                    style={active ? { background: 'linear-gradient(135deg, var(--acc), var(--acc-2))', boxShadow: '0 0 12px -4px var(--glow)' } : undefined}
-                  >
-                    <Icon className="h-4 w-4" />
-                  </button>
-                )
-              })}
+        {/* график: таймфреймы сверху по центру, рисовалки слева */}
+        <div
+          className="cp-border-glow relative min-h-[340px] min-w-0 flex-1 overflow-hidden rounded-2xl bg-[var(--card-solid)]"
+          style={{ borderTop: `2px solid ${exMeta.color}55` }}
+        >
+          {/* таймфреймы — верхняя линия, по центру */}
+          <div className="absolute left-1/2 top-2 z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-xl border border-[var(--border)] bg-[var(--card-solid)] p-0.5 shadow-lg">
+            {INTERVALS.map((iv) => (
               <button
-                onClick={() => { localStorage.removeItem(`cp-draw-${chartKey}`); setClearTick((v) => v + 1) }}
-                aria-label="Удалить все рисунки"
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[color-mix(in_srgb,var(--destructive)_15%,transparent)] hover:text-[var(--destructive)]"
+                key={iv.id}
+                onClick={() => setIntervalId(iv.id)}
+                className={cn(
+                  'cp-num flex h-7 items-center justify-center rounded-lg px-2 text-[10px] font-black transition-all',
+                  interval === iv.id ? 'text-white' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+                )}
+                style={interval === iv.id ? { background: 'linear-gradient(135deg, var(--acc), var(--acc-2))' } : undefined}
+                aria-pressed={interval === iv.id}
               >
-                <Trash2 className="h-4 w-4" />
+                {iv.label}
               </button>
-            </div>
-            {/* таймфреймы */}
-            <div className="flex items-center gap-0.5 rounded-xl border border-[var(--border)] bg-[var(--muted)] p-0.5">
-              {INTERVALS.map((iv) => (
-                <button
-                  key={iv.id}
-                  onClick={() => setIntervalId(iv.id)}
-                  className={cn(
-                    'cp-num flex h-8 items-center justify-center rounded-lg px-2 text-[11px] font-black transition-all',
-                    interval === iv.id ? 'text-white' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
-                  )}
-                  style={interval === iv.id ? { background: 'linear-gradient(135deg, var(--acc), var(--acc-2))' } : undefined}
-                  aria-pressed={interval === iv.id}
-                >
-                  {iv.label}
-                </button>
-              ))}
-              <button
-                onClick={() => setReload((v) => v + 1)}
-                aria-label="Обновить свечи"
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
-              >
-                <RotateCcw className={cn('h-4 w-4', loading && 'animate-spin')} />
-              </button>
-            </div>
-            <span className="ml-auto hidden text-[10px] text-[var(--muted-foreground)] xl:block">
-              колесо — зум · клик по колёсику — линейка · правый клик — удалить рисунок · двойной клик — сброс вида
-            </span>
+            ))}
+            <div className="mx-0.5 h-4 w-px bg-[var(--border)]" />
+            <button
+              onClick={() => setReload((v) => v + 1)}
+              aria-label="Обновить свечи"
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
+            >
+              <RotateCcw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+            </button>
           </div>
 
-          {/* график */}
-          <div
-            className="cp-border-glow relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-[var(--card-solid)]"
-            style={{ borderTop: `2px solid ${exMeta.color}55` }}
-          >
-            <div className="pointer-events-none absolute left-3 top-2.5 z-10 flex items-center gap-2">
-              <span className="cp-num rounded-md bg-[var(--muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--muted-foreground)]">
-                {exMeta.name.toUpperCase()} · {m} · {base}
-                {quote && <span className="opacity-60">/{quote}</span>} · {interval}
-              </span>
-            </div>
-            <CandleChart
-              candles={candles}
-              interval={interval}
-              chartKey={chartKey}
-              tool={tool}
-              onToolDone={() => setTool('cursor')}
-              livePrice={live?.price}
-              theme={theme}
-              clearTick={clearTick}
-            />
+          {/* рисовалки — слева, вертикально */}
+          <div className="absolute left-2 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-0.5 rounded-xl border border-[var(--border)] bg-[var(--card-solid)] p-0.5 shadow-lg">
+            {TOOLS.map((t) => {
+              const Icon = t.icon
+              const active = tool === t.id
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setTool(t.id)}
+                  aria-label={t.label}
+                  aria-pressed={active}
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-lg transition-all',
+                    active ? 'text-white' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+                  )}
+                  style={active ? { background: 'linear-gradient(135deg, var(--acc), var(--acc-2))', boxShadow: '0 0 12px -4px var(--glow)' } : undefined}
+                >
+                  <Icon className="h-4 w-4" />
+                </button>
+              )
+            })}
+            <div className="my-0.5 h-px bg-[var(--border)]" />
+            <button
+              onClick={() => { localStorage.removeItem(`cp-draw-${chartKey}`); setClearTick((v) => v + 1) }}
+              aria-label="Удалить все рисунки"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[color-mix(in_srgb,var(--destructive)_15%,transparent)] hover:text-[var(--destructive)]"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
           </div>
+
+          <CandleChart
+            candles={candles}
+            interval={interval}
+            chartKey={chartKey}
+            tool={tool}
+            onToolDone={() => setTool('cursor')}
+            livePrice={live?.price}
+            theme={theme}
+            clearTick={clearTick}
+            label={`${exMeta.name.toUpperCase()} · ${m} · ${base}${quote ? `/${quote}` : ''} · ${ivLabel}`}
+            padLeft={46}
+          />
         </div>
 
-        {/* правая колонка: мини-график + монеты */}
-        <div className="flex min-h-0 w-full shrink-0 flex-col gap-3 lg:w-[330px]">
-          <div className="cp-border-glow relative h-[178px] shrink-0 overflow-hidden rounded-2xl bg-[var(--card-solid)]">
-            <div className="pointer-events-none absolute left-3 top-2 z-10">
-              <span className="cp-num rounded-md bg-[var(--muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--muted-foreground)]">1м · {base}</span>
-            </div>
-            <CandleChart
-              candles={mini}
-              interval="1m"
-              livePrice={live?.price}
-              theme={theme}
-              showVolume={false}
-              interactive={false}
-            />
-          </div>
+        {/* правая колонка: биржи · рынок · монеты */}
+        <div className="flex min-h-0 w-full shrink-0 flex-col lg:w-[330px]">
           <CoinsPanel
             rows={symbols}
             tickers={tickers}
             selected={symbol}
             onSelect={selectSymbol}
             exKey={`${ex}:${m}`}
+            ex={ex}
+            m={m}
+            onEx={setEx}
+            onM={setM}
           />
         </div>
       </div>

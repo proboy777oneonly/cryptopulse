@@ -1,9 +1,10 @@
 'use client'
 
 // ════════════════════════════════════════════════════════════════════
-// Canvas-график свечей: зум колесом, панорама драгом, кроссхэйр,
-// инструменты рисовалки (тренд/гориз/верт/прямоугольник/фибо),
-// линейка на колёсико мыши (средняя кнопка) и в тулбаре.
+// Canvas-график свечей: зум колесом, панорама драгом во всех направлениях,
+// кроссхэйр, рисовалки (тренд/гориз/верт/прямоугольник/фибо),
+// линейка на колёсико (живёт, пока колёсико зажато) и в тулбаре,
+// магнит с привязкой к OHLC на Ctrl.
 // Рисунки хранятся в localStorage по ключу графика.
 // ════════════════════════════════════════════════════════════════════
 
@@ -76,9 +77,46 @@ interface MouseState {
   startX: number
   startY: number
   startOffset: number
+  startPRange?: { min: number; max: number }
   pending?: { t: number; p: number }
   hoverId?: string
   grab?: { id: string; orig: { t: number; p: number }[]; idxStart: number; priceStart: number }
+}
+
+/** состояние вида: масштаб/сдвиг по X + ручный диапазон цен по Y (панорама) */
+interface ViewBox {
+  bars: number
+  offset: number
+  pRange: { min: number; max: number } | null
+}
+
+/** единая шкала графика: видимые бары, диапазон цен, преобразования координат */
+interface Scale {
+  cs: Candle[]
+  intervalMs: number
+  len: number
+  rightIdx: number
+  startIdx: number
+  i0: number
+  i1: number
+  minP: number
+  maxP: number
+  maxV: number
+  barW: number
+  padL: number
+  padR: number
+  padT: number
+  padB: number
+  plotW: number
+  fullH: number
+  volH: number
+  chartH: number
+  xOfIdx: (i: number) => number
+  idxOfT: (t: number) => number
+  xOfT: (t: number) => number
+  yOfP: (p: number) => number
+  pOfY: (y: number) => number
+  tOfX: (x: number) => number
 }
 
 let drawId = 0
@@ -116,15 +154,21 @@ export interface CandleChartProps {
   interactive?: boolean
   /** инкремент извне → очистить все рисунки */
   clearTick?: number
+  /** подпись слева сверху: биржа · рынок · тикер · ТФ */
+  label?: string
+  /** левый отступ канваса — место под вертикальную панель рисовалок */
+  padLeft?: number
 }
 
 export function CandleChart({
   candles, interval, chartKey, tool = 'cursor', onToolDone, livePrice,
   theme, className, showVolume = true, interactive = true, clearTick,
+  label, padLeft = 6,
 }: CandleChartProps) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const viewRef = useRef({ bars: 130, offset: 0 })
+  const viewRef = useRef<ViewBox>({ bars: 130, offset: 0, pRange: null })
+  const magnetRef = useRef(false)
   const mouseRef = useRef<MouseState>({ x: 0, y: 0, inside: false, mode: 'idle', startX: 0, startY: 0, startOffset: 0 })
   const drawingsRef = useRef<ChartDrawing[]>([])
   const rulerRef = useRef<{ t1: number; p1: number; t2: number; p2: number } | null>(null)
@@ -160,13 +204,81 @@ export function CandleChart({
   const geom = useCallback(() => {
     const w = sizeRef.current.w
     const h = sizeRef.current.h
-    const padL = 6, padR = 64, padT = 10, padB = 20
+    const padL = padLeft, padR = 64, padT = 10, padB = 20
     const plotW = Math.max(30, w - padL - padR)
     const fullH = Math.max(40, h - padT - padB)
     const volH = showVolume ? fullH * 0.16 : 0
     const chartH = fullH - volH - (showVolume ? 8 : 0)
     return { padL, padR, padT, padB, plotW, fullH, volH, chartH }
-  }, [showVolume])
+  }, [padLeft, showVolume])
+
+  // ── Единая шкала: видимые бары + диапазон цен ──────────────────
+  // Единственная точка правды для отрисовки и всех обработчиков:
+  // горизонтальный сдвиг (offset), ручная вертикальная панорама (pRange,
+  // включается после вертикального драга) и живая цена.
+  const computeScale = useCallback((): Scale | null => {
+    const cs = candlesRef.current
+    if (!cs || cs.length < 2) return null
+    const view = viewRef.current
+    const g = geom()
+    const intervalMs = cs[1].t - cs[0].t || 60_000
+    const len = cs.length
+    view.bars = clamp(view.bars, 15, Math.max(60, len + 40))
+    const rightIdx = clamp(len - view.offset, Math.max(5, view.bars * 0.35), len + view.bars * 0.35)
+    const startIdx = rightIdx - view.bars
+    const i0 = Math.max(0, Math.floor(startIdx))
+    const i1 = Math.min(len - 1, Math.ceil(rightIdx))
+    let minP = Infinity, maxP = -Infinity, maxV = 0
+    for (let i = i0; i <= i1; i++) {
+      const cd = cs[i]
+      if (cd.l < minP) minP = cd.l
+      if (cd.h > maxP) maxP = cd.h
+      if (cd.v > maxV) maxV = cd.v
+    }
+    if (!Number.isFinite(minP) || !Number.isFinite(maxP)) {
+      minP = 0
+      maxP = 1
+    }
+    if (livePrice && livePrice > 0) {
+      if (livePrice < minP) minP = livePrice
+      if (livePrice > maxP) maxP = livePrice
+    }
+    const padP = (maxP - minP) * 0.07 || Math.abs(maxP) * 0.01 || 1
+    let lo = minP - padP
+    let hi = maxP + padP
+    if (view.pRange) {
+      lo = view.pRange.min
+      hi = view.pRange.max
+    }
+    if (!(hi > lo)) hi = lo + Math.abs(lo) * 0.02 + 1
+    const barW = g.plotW / view.bars
+    const xOfIdx = (i: number) => g.padL + (i - startIdx + 0.5) * barW
+    const idxOfT = (t: number) => (t - cs[0].t) / intervalMs
+    return {
+      cs, intervalMs, len, rightIdx, startIdx, i0, i1, minP: lo, maxP: hi, maxV, barW,
+      padL: g.padL, padR: g.padR, padT: g.padT, padB: g.padB,
+      plotW: g.plotW, fullH: g.fullH, volH: g.volH, chartH: g.chartH,
+      xOfIdx, idxOfT,
+      xOfT: (t: number) => xOfIdx(idxOfT(t)),
+      yOfP: (p: number) => g.padT + ((hi - p) / (hi - lo)) * g.chartH,
+      pOfY: (y: number) => hi - ((y - g.padT) / g.chartH) * (hi - lo),
+      tOfX: (x: number) => cs[0].t + ((x - g.padL) / barW + startIdx - 0.5) * intervalMs,
+    }
+  }, [geom, livePrice])
+
+  // магнит (Ctrl): привязка точки к OHLC ближайшей свечи
+  const snapPoint = useCallback((t: number, p: number): { t: number; p: number } => {
+    const cs = candlesRef.current
+    if (!magnetRef.current || !cs || cs.length < 2) return { t, p }
+    const intervalMs = cs[1].t - cs[0].t || 60_000
+    const idx = clamp(Math.round((t - cs[0].t) / intervalMs), 0, cs.length - 1)
+    const cd = cs[idx]
+    let best = cd.c
+    for (const v of [cd.o, cd.h, cd.l, cd.c]) {
+      if (Math.abs(v - p) < Math.abs(best - p)) best = v
+    }
+    return { t: cd.t, p: best }
+  }, [])
 
   // ── Главная отрисовка ─────────────────────────────────────────────
   const redraw = useCallback(() => {
@@ -187,46 +299,24 @@ export function CandleChart({
     ctx.fillStyle = C.bg
     ctx.fillRect(0, 0, w, h)
 
-    const cs = candlesRef.current
-    if (!cs || cs.length < 2) {
+    const sc = computeScale()
+    if (!sc) {
       ctx.fillStyle = C.muted
       ctx.font = '12px ui-monospace, Menlo, monospace'
       ctx.textAlign = 'center'
       ctx.fillText('Загрузка свечей…', w / 2, h / 2)
       return
     }
-
-    const intervalMs = cs[1].t - cs[0].t || 60_000
-    const view = viewRef.current
-    view.bars = clamp(view.bars, 15, Math.max(60, cs.length + 40))
-    const len = cs.length
-    let rightIdx = len - view.offset
-    rightIdx = clamp(rightIdx, Math.max(5, view.bars * 0.35), len + view.bars * 0.35)
-    const startIdx = rightIdx - view.bars
-    const { padL, padR, padT, plotW, volH, chartH, fullH } = geom()
-    const barW = plotW / view.bars
-    const xOfIdx = (i: number) => padL + (i - startIdx + 0.5) * barW
-    const idxOfT = (t: number) => (t - cs[0].t) / intervalMs
-    const xOfT = (t: number) => xOfIdx(idxOfT(t))
-
-    const i0 = Math.max(0, Math.floor(startIdx))
-    const i1 = Math.min(len - 1, Math.ceil(rightIdx))
-    let minP = Infinity, maxP = -Infinity, maxV = 0
-    for (let i = i0; i <= i1; i++) {
-      if (cs[i].l < minP) minP = cs[i].l
-      if (cs[i].h > maxP) maxP = cs[i].h
-      if (cs[i].v > maxV) maxV = cs[i].v
-    }
-    if (livePrice && livePrice > 0) {
-      if (livePrice < minP) minP = livePrice
-      if (livePrice > maxP) maxP = livePrice
-    }
-    const padP = (maxP - minP) * 0.07 || Math.abs(maxP) * 0.01 || 1
-    minP -= padP
-    maxP += padP
-    const yOfP = (p: number) => padT + ((maxP - p) / (maxP - minP)) * chartH
-    const pOfY = (y: number) => maxP - ((y - padT) / chartH) * (maxP - minP)
-    const tOfX = (x: number) => cs[0].t + ((x - padL) / barW + startIdx - 0.5) * intervalMs
+    const cs = sc.cs
+    const {
+      padL, padR, padT, plotW, fullH, volH, chartH, barW,
+      i0, i1, minP, maxP, maxV, len, intervalMs, startIdx,
+    } = sc
+    const xOfIdx = sc.xOfIdx
+    const xOfT = sc.xOfT
+    const yOfP = sc.yOfP
+    const pOfY = sc.pOfY
+    const tOfX = sc.tOfX
 
     // сетка + шкала цены
     ctx.font = '10px ui-monospace, Menlo, monospace'
@@ -293,19 +383,22 @@ export function CandleChart({
       ctx.fillRect(x - bodyW / 2, top, bodyW, bh)
     }
 
-    // последняя цена
+    // последняя цена (при ручной панораме чип прилипает к краю области)
     const lastC = cs[len - 1]
     const lastP = livePrice && livePrice > 0 ? livePrice : lastC.c
     const lastUp = lastP >= lastC.o
-    const yLast = yOfP(lastP)
-    ctx.setLineDash([4, 4])
-    ctx.strokeStyle = lastUp ? C.pos : C.neg
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(padL, Math.round(yLast) + 0.5)
-    ctx.lineTo(padL + plotW, Math.round(yLast) + 0.5)
-    ctx.stroke()
-    ctx.setLineDash([])
+    const yLastRaw = yOfP(lastP)
+    const yLast = clamp(yLastRaw, padT + 8, padT + chartH - 8)
+    if (yLastRaw >= padT && yLastRaw <= padT + chartH) {
+      ctx.setLineDash([4, 4])
+      ctx.strokeStyle = lastUp ? C.pos : C.neg
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(padL, Math.round(yLast) + 0.5)
+      ctx.lineTo(padL + plotW, Math.round(yLast) + 0.5)
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
     // чип последней цены
     ctx.fillStyle = lastUp ? C.pos : C.neg
     const lpTxt = fmtChartPrice(lastP)
@@ -317,25 +410,68 @@ export function CandleChart({
     ctx.textAlign = 'left'
     ctx.fillText(lpTxt, padL + plotW + 7, yLast)
 
-    // легенда OHLC hovered
+    // легенда: подпись графика (биржа · рынок · тикер · ТФ) + OHLC
     const ms = mouseRef.current
-    const hovIdx = ms.inside ? clamp(Math.round(startIdx + (ms.x - padL) / barW - 0.5), 0, len - 1) : len - 1
-    const hcd = cs[hovIdx]
-    if (hcd) {
-      const chg = hcd.o > 0 ? ((hcd.c - hcd.o) / hcd.o) * 100 : 0
-      const up = hcd.c >= hcd.o
-      ctx.font = '10px ui-monospace, Menlo, monospace'
+    if (plotW >= 420) {
       ctx.textAlign = 'left'
-      ctx.fillStyle = C.muted
-      const y0 = padT + 2
-      ctx.fillText('O', padL + 4, y0)
-      ctx.fillText('H', padL + 62, y0)
-      ctx.fillText('L', padL + 130, y0)
-      ctx.fillStyle = up ? C.pos : C.neg
-      ctx.fillText(fmtChartPrice(hcd.o), padL + 14, y0)
-      ctx.fillText(fmtChartPrice(hcd.h), padL + 72, y0)
-      ctx.fillText(fmtChartPrice(hcd.l), padL + 140, y0)
-      ctx.fillText(`C ${fmtChartPrice(hcd.c)}  ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`, padL + 200, y0)
+      if (label) {
+        ctx.font = 'bold 10px ui-monospace, Menlo, monospace'
+        let txt = label
+        const maxLabelW = Math.max(140, plotW / 2 - 150)
+        while (ctx.measureText(txt).width > maxLabelW && txt.includes(' · ')) {
+          txt = txt.split(' · ').slice(1).join(' · ')
+        }
+        ctx.fillStyle = C.fg
+        ctx.fillText(txt, padL + 4, padT + 10)
+      }
+      const hovIdx = ms.inside ? clamp(Math.round(startIdx + (ms.x - padL) / barW - 0.5), 0, len - 1) : len - 1
+      const hcd = cs[hovIdx]
+      if (hcd) {
+        const chg = hcd.o > 0 ? ((hcd.c - hcd.o) / hcd.o) * 100 : 0
+        const up = hcd.c >= hcd.o
+        ctx.font = '10px ui-monospace, Menlo, monospace'
+        const y0 = padT + 34
+        ctx.fillStyle = C.muted
+        ctx.fillText('O', padL + 4, y0)
+        ctx.fillText('H', padL + 62, y0)
+        ctx.fillText('L', padL + 130, y0)
+        ctx.fillStyle = up ? C.pos : C.neg
+        ctx.fillText(fmtChartPrice(hcd.o), padL + 14, y0)
+        ctx.fillText(fmtChartPrice(hcd.h), padL + 72, y0)
+        ctx.fillText(fmtChartPrice(hcd.l), padL + 140, y0)
+        ctx.fillText(`C ${fmtChartPrice(hcd.c)}  ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`, padL + 200, y0)
+      }
+    }
+
+    // магнит (Ctrl): индикатор + привязка курсора к OHLC
+    if (magnetRef.current && ms.inside) {
+      const sn = snapPoint(tOfX(ms.x), pOfY(ms.y))
+      const sx = xOfT(sn.t)
+      const sy = yOfP(sn.p)
+      ctx.strokeStyle = C.acc
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.arc(sx, sy, 6, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.fillStyle = `${C.acc}cc`
+      ctx.beginPath()
+      ctx.arc(sx, sy, 2, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.font = 'bold 9px ui-monospace, Menlo, monospace'
+      const mTxt = 'МАГНИТ'
+      const mw = ctx.measureText(mTxt).width + 12
+      const mx = clamp(padL + plotW - mw - 6, padL, padL + plotW - mw)
+      const my = plotW >= 420 ? padT + 12 : padT + 56
+      roundRect(ctx, mx, my, mw, 15, 4)
+      ctx.fillStyle = `${C.acc}26`
+      ctx.fill()
+      roundRect(ctx, mx, my, mw, 15, 4)
+      ctx.strokeStyle = `${C.acc}88`
+      ctx.lineWidth = 1
+      ctx.stroke()
+      ctx.fillStyle = C.acc
+      ctx.textAlign = 'left'
+      ctx.fillText(mTxt, mx + 6, my + 8)
     }
 
     // ── Рисунки ────────────────────────────────────────────────────
@@ -429,7 +565,7 @@ export function CandleChart({
 
     // предпросмотр рисования
     if (ms.mode === 'draw2' && ms.pending) {
-      const p2 = { t: tOfX(ms.x), p: pOfY(ms.y) }
+      const p2 = snapPoint(tOfX(ms.x), pOfY(ms.y))
       const preview: ChartDrawing = {
         id: 'preview',
         type: (TWO_POINT.includes(toolRef.current as DrawType) ? toolRef.current : 'trend') as DrawType,
@@ -442,9 +578,11 @@ export function CandleChart({
 
     // ── Линейка ────────────────────────────────────────────────────
     const r = rulerRef.current
-    const rulerLive = ms.mode === 'ruler' && ms.pending
-      ? { t1: ms.pending.t, p1: ms.pending.p, t2: tOfX(ms.x), p2: pOfY(ms.y) }
-      : r
+    let rulerLive = r
+    if (ms.mode === 'ruler' && ms.pending) {
+      const sn2 = snapPoint(tOfX(ms.x), pOfY(ms.y))
+      rulerLive = { t1: ms.pending.t, p1: ms.pending.p, t2: sn2.t, p2: sn2.p }
+    }
     if (rulerLive) {
       const x1 = xOfT(rulerLive.t1), y1 = yOfP(rulerLive.p1)
       const x2 = xOfT(rulerLive.t2), y2 = yOfP(rulerLive.p2)
@@ -515,30 +653,14 @@ export function CandleChart({
       ctx.textAlign = 'center'
       ctx.fillText(ctTxt, clamp(ms.x, padL + tw2 / 2, padL + plotW - tw2 / 2), padT + fullH + 10)
     }
-  }, [geom, interval, livePrice, readColors, showVolume])
+  }, [computeScale, interval, label, livePrice, readColors, showVolume, snapPoint])
 
   // ── Хит-тест рисунка под курсором ─────────────────────────────────
   const hitTest = useCallback((x: number, y: number): string | null => {
-    const cs = candlesRef.current
-    if (!cs || cs.length < 2 || !chartKey) return null
-    const intervalMs = cs[1].t - cs[0].t || 60_000
-    const view = viewRef.current
-    const len = cs.length
-    const rightIdx = clamp(len - view.offset, Math.max(5, view.bars * 0.35), len + view.bars * 0.35)
-    const startIdx = rightIdx - view.bars
-    const { padL, plotW, chartH, fullH } = geom()
-    const barW = plotW / view.bars
-    void fullH
-    let minP = Infinity, maxP = -Infinity
-    const i0 = Math.max(0, Math.floor(startIdx)), i1 = Math.min(len - 1, Math.ceil(rightIdx))
-    for (let i = i0; i <= i1; i++) {
-      if (cs[i].l < minP) minP = cs[i].l
-      if (cs[i].h > maxP) maxP = cs[i].h
-    }
-    const padP = (maxP - minP) * 0.07 || 1
-    minP -= padP; maxP += padP
-    const yOfP = (p: number) => 10 + ((maxP - p) / (maxP - minP)) * chartH
-    const xOfT = (t: number) => padL + ((t - cs[0].t) / intervalMs - startIdx + 0.5) * barW
+    if (!chartKey) return null
+    const sc = computeScale()
+    if (!sc) return null
+    const { padL, plotW, padT, fullH } = sc
 
     const near = (ax: number, ay: number, bx: number, by: number): boolean => {
       const dx = bx - ax, dy = by - ay
@@ -550,13 +672,13 @@ export function CandleChart({
     }
 
     for (const d of drawingsRef.current) {
-      const pts = d.points.map((pt) => ({ x: xOfT(pt.t), y: yOfP(pt.p) }))
+      const pts = d.points.map((pt) => ({ x: sc.xOfT(pt.t), y: sc.yOfP(pt.p) }))
       if (d.type === 'trend' && pts.length >= 2) {
         if (near(pts[0].x, pts[0].y, pts[1].x, pts[1].y)) return d.id
       } else if (d.type === 'hline' && pts.length >= 1) {
         if (near(padL, pts[0].y, padL + plotW, pts[0].y)) return d.id
       } else if (d.type === 'vline' && pts.length >= 1) {
-        if (near(pts[0].x, 10, pts[0].x, 10 + fullH)) return d.id
+        if (near(pts[0].x, padT, pts[0].x, padT + fullH)) return d.id
       } else if (d.type === 'rect' && pts.length >= 2) {
         const x1 = Math.min(pts[0].x, pts[1].x), x2 = Math.max(pts[0].x, pts[1].x)
         const y1 = Math.min(pts[0].y, pts[1].y), y2 = Math.max(pts[0].y, pts[1].y)
@@ -566,7 +688,7 @@ export function CandleChart({
       }
     }
     return null
-  }, [chartKey, geom])
+  }, [chartKey, computeScale])
 
   // ── Загрузка рисунков при смене ключа ─────────────────────────────
   const redrawRef = useRef(redraw)
@@ -579,7 +701,7 @@ export function CandleChart({
     } else {
       drawingsRef.current = []
     }
-    viewRef.current = { bars: 130, offset: 0 }
+    viewRef.current = { bars: 130, offset: 0, pRange: null }
     redrawRef.current()
   }, [chartKey])
 
@@ -637,6 +759,46 @@ export function CandleChart({
     return () => window.removeEventListener('keydown', onKey)
   }, [onToolDone])
 
+  // Ctrl — магнит: привязка рисовалок/линейки к OHLC свечей, пока зажат
+  useEffect(() => {
+    if (!interactive) return
+    const apply = (down: boolean, e: KeyboardEvent) => {
+      if (e.key !== 'Control' || magnetRef.current === down) return
+      magnetRef.current = down
+      redrawRef.current()
+    }
+    const onKeyDown = (e: KeyboardEvent) => apply(true, e)
+    const onKeyUp = (e: KeyboardEvent) => apply(false, e)
+    const onBlur = () => {
+      if (!magnetRef.current) return
+      magnetRef.current = false
+      redrawRef.current()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [interactive])
+
+  // отпустили колёсико мыши (в любой точке окна) — линейка выключается
+  useEffect(() => {
+    if (!interactive) return
+    const onWinMouseUp = () => {
+      const ms = mouseRef.current
+      if (ms.mode !== 'ruler') return
+      ms.mode = 'idle'
+      ms.pending = undefined
+      rulerRef.current = null
+      redrawRef.current()
+    }
+    window.addEventListener('mouseup', onWinMouseUp)
+    return () => window.removeEventListener('mouseup', onWinMouseUp)
+  }, [interactive])
+
   // ── Обработчики мыши ──────────────────────────────────────────────
   const pos = (e: React.MouseEvent | MouseEvent) => {
     const cv = canvasRef.current!
@@ -654,30 +816,25 @@ export function CandleChart({
     if (!cv) return
 
     if (ms.mode === 'pan') {
-      const view = viewRef.current
-      const { plotW } = geom()
-      const barW = plotW / view.bars
-      view.offset = ms.startOffset + (p.x - ms.startX) / barW
-    } else if (ms.mode === 'drag' && ms.grab) {
-      const cs = candlesRef.current
-      if (cs.length >= 2) {
-        const intervalMs = cs[1].t - cs[0].t || 60_000
-        const dIdx = (p.x - ms.startX) / (geom().plotW / viewRef.current.bars)
+      const sc = computeScale()
+      if (sc) {
         const view = viewRef.current
-        const len = cs.length
-        const rightIdx = clamp(len - view.offset, Math.max(5, view.bars * 0.35), len + view.bars * 0.35)
-        const startIdx = rightIdx - view.bars
-        // цена под стартовой позицией мыши
-        void startIdx
-        const { chartH } = geom()
-        let minP = Infinity, maxP = -Infinity
-        const i0 = Math.max(0, Math.floor(startIdx)), i1 = Math.min(len - 1, Math.ceil(rightIdx))
-        for (let i = i0; i <= i1; i++) { if (cs[i].l < minP) minP = cs[i].l; if (cs[i].h > maxP) maxP = cs[i].h }
-        const padP = (maxP - minP) * 0.07 || 1
-        minP -= padP; maxP += padP
-        const pOfY = (y: number) => maxP - ((y - 10) / chartH) * (maxP - minP)
-        const dPrice = pOfY(p.y) - ms.grab.priceStart
-        const dTime = dIdx * intervalMs
+        view.offset = ms.startOffset + (p.x - ms.startX) / sc.barW
+        // вертикальная панорама: диапазон цен следует за курсором
+        if (ms.startPRange && Math.abs(p.y - ms.startY) > 3) {
+          const range = ms.startPRange.max - ms.startPRange.min
+          if (range > 0 && Number.isFinite(range)) {
+            const shift = ((p.y - ms.startY) / sc.chartH) * range
+            view.pRange = { min: ms.startPRange.min + shift, max: ms.startPRange.max + shift }
+          }
+        }
+      }
+    } else if (ms.mode === 'drag' && ms.grab) {
+      const sc = computeScale()
+      if (sc) {
+        const dIdx = (p.x - ms.startX) / sc.barW
+        const dPrice = sc.pOfY(p.y) - ms.grab.priceStart
+        const dTime = dIdx * sc.intervalMs
         const target = drawingsRef.current.find((d) => d.id === ms.grab!.id)
         if (target) {
           target.points = ms.grab.orig.map((pt) => ({ t: pt.t + dTime, p: pt.p + dPrice }))
@@ -686,8 +843,7 @@ export function CandleChart({
       }
     } else if (ms.mode === 'idle') {
       ms.hoverId = hitTest(p.x, p.y) ?? undefined
-      const t = toolRef.current
-      cv.style.cursor = ms.hoverId ? 'pointer' : t === 'cursor' ? 'crosshair' : 'crosshair'
+      cv.style.cursor = ms.hoverId ? 'pointer' : 'crosshair'
     }
     redraw()
   }
@@ -698,26 +854,11 @@ export function CandleChart({
     const p = pos(e)
     const cv = canvasRef.current
     if (!cv) return
-    const cs = candlesRef.current
-    if (!cs || cs.length < 2) return
-    const intervalMs = cs[1].t - cs[0].t || 60_000
-    const view = viewRef.current
-    const len = cs.length
-    const rightIdx = clamp(len - view.offset, Math.max(5, view.bars * 0.35), len + view.bars * 0.35)
-    const startIdx = rightIdx - view.bars
-    const { padL, plotW, chartH, fullH } = geom()
-    const barW = plotW / view.bars
-    void fullH
-    let minP = Infinity, maxP = -Infinity
-    const i0 = Math.max(0, Math.floor(startIdx)), i1 = Math.min(len - 1, Math.ceil(rightIdx))
-    for (let i = i0; i <= i1; i++) { if (cs[i].l < minP) minP = cs[i].l; if (cs[i].h > maxP) maxP = cs[i].h }
-    const padP = (maxP - minP) * 0.07 || 1
-    minP -= padP; maxP += padP
-    const pOfY = (y: number) => maxP - ((y - 10) / chartH) * (maxP - minP)
-    const tOfX = (x: number) => cs[0].t + ((x - padL) / barW + startIdx - 0.5) * intervalMs
-    const anchor = { t: tOfX(p.x), p: pOfY(p.y) }
+    const sc = computeScale()
+    if (!sc) return
+    const anchor = snapPoint(sc.tOfX(p.x), sc.pOfY(p.y))
 
-    // средняя кнопка — линейка (колёсико)
+    // средняя кнопка — линейка (живёт, пока колёсико зажато)
     if (e.button === 1) {
       e.preventDefault()
       ms.mode = 'ruler'
@@ -744,7 +885,7 @@ export function CandleChart({
         const target = drawingsRef.current.find((d) => d.id === id)
         if (target) {
           ms.mode = 'drag'
-          ms.grab = { id, orig: target.points.map((pt) => ({ ...pt })), idxStart: (anchor.t - cs[0].t) / intervalMs, priceStart: anchor.p }
+          ms.grab = { id, orig: target.points.map((pt) => ({ ...pt })), idxStart: sc.idxOfT(anchor.t), priceStart: anchor.p }
           ms.startX = p.x
           ms.startY = p.y
         }
@@ -752,7 +893,8 @@ export function CandleChart({
         ms.mode = 'pan'
         ms.startX = p.x
         ms.startY = p.y
-        ms.startOffset = view.offset
+        ms.startOffset = viewRef.current.offset
+        ms.startPRange = { min: sc.minP, max: sc.maxP }
         cv.style.cursor = 'grabbing'
       }
       redraw()
@@ -800,12 +942,8 @@ export function CandleChart({
 
   const onMouseUp = () => {
     const ms = mouseRef.current
-    if (ms.mode === 'ruler' && ms.pending) {
-      // линейка колёсиком: фиксируем и оставляем до Esc/следующего замера
-      rulerRef.current = { t1: ms.pending.t, p1: ms.pending.p, t2: ms.x ? tOfXFromState(ms.x) : ms.pending.t, p2: pOfYFromState(ms.y) }
-      ms.pending = undefined
-      ms.mode = 'idle'
-    } else if (ms.mode === 'pan' || ms.mode === 'drag') {
+    // линейка колёсиком выключается на window.mouseup — отпустил, она исчезла
+    if (ms.mode === 'pan' || ms.mode === 'drag') {
       ms.mode = 'idle'
       ms.grab = undefined
       const cv = canvasRef.current
@@ -814,59 +952,25 @@ export function CandleChart({
     redraw()
   }
 
-  // хелперы цены/времени под курсором (для фиксирования линейки)
-  function pOfYFromState(y: number): number {
-    const cs = candlesRef.current
-    if (!cs || cs.length < 2) return 0
-    const view = viewRef.current
-    const len = cs.length
-    const rightIdx = clamp(len - view.offset, Math.max(5, view.bars * 0.35), len + view.bars * 0.35)
-    const startIdx = rightIdx - view.bars
-    const { chartH } = geom()
-    let minP = Infinity, maxP = -Infinity
-    const i0 = Math.max(0, Math.floor(startIdx)), i1 = Math.min(len - 1, Math.ceil(rightIdx))
-    for (let i = i0; i <= i1; i++) { if (cs[i].l < minP) minP = cs[i].l; if (cs[i].h > maxP) maxP = cs[i].h }
-    const padP = (maxP - minP) * 0.07 || 1
-    minP -= padP; maxP += padP
-    return maxP - ((y - 10) / chartH) * (maxP - minP)
-  }
-  function tOfXFromState(x: number): number {
-    const cs = candlesRef.current
-    if (!cs || cs.length < 2) return Date.now()
-    const intervalMs = cs[1].t - cs[0].t || 60_000
-    const view = viewRef.current
-    const len = cs.length
-    const rightIdx = clamp(len - view.offset, Math.max(5, view.bars * 0.35), len + view.bars * 0.35)
-    const startIdx = rightIdx - view.bars
-    const { padL, plotW } = geom()
-    const barW = plotW / view.bars
-    return cs[0].t + ((x - padL) / barW + startIdx - 0.5) * intervalMs
-  }
-
   const onWheelNative = useCallback((e: WheelEvent) => {
     if (!interactive) return
     e.preventDefault()
-    const cs = candlesRef.current
-    if (!cs || cs.length < 2) return
-    const view = viewRef.current
-    const { padL, plotW } = geom()
+    const sc = computeScale()
+    if (!sc) return
     const cv = canvasRef.current
     if (!cv) return
     const r = cv.getBoundingClientRect()
     const px = e.clientX - r.left
     const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15
-    const oldBars = view.bars
-    const newBars = clamp(oldBars * factor, 15, Math.max(60, cs.length + 40))
+    const view = viewRef.current
+    const newBars = clamp(view.bars * factor, 15, Math.max(60, sc.len + 40))
     // якорь: индекс под курсором остаётся на месте
-    const len = cs.length
-    const oldRight = clamp(len - view.offset, Math.max(5, oldBars * 0.35), len + oldBars * 0.35)
-    const oldStart = oldRight - oldBars
-    const anchorIdx = oldStart + ((px - padL) / plotW) * oldBars
-    const newRight = anchorIdx + (1 - (px - padL) / plotW) * newBars
+    const anchorIdx = sc.startIdx + ((px - sc.padL) / sc.plotW) * view.bars
+    const newRight = anchorIdx + (1 - (px - sc.padL) / sc.plotW) * newBars
     view.bars = newBars
-    view.offset = len - newRight
+    view.offset = sc.len - newRight
     redrawRef.current()
-  }, [geom, interactive])
+  }, [computeScale, interactive])
 
   // нативный non-passive wheel: зум колесом без прокрутки страницы
   useEffect(() => {
@@ -877,24 +981,21 @@ export function CandleChart({
   }, [onWheelNative])
 
   const onDoubleClick = () => {
-    viewRef.current = { bars: 130, offset: 0 }
+    viewRef.current = { bars: 130, offset: 0, pRange: null }
     redraw()
   }
 
   const onLeave = () => {
     const ms = mouseRef.current
     ms.inside = false
-    // драг/линейка завершились вне канваса — фиксируем
-    if (ms.mode === 'ruler' && ms.pending) {
-      rulerRef.current = { t1: ms.pending.t, p1: ms.pending.p, t2: tOfXFromState(ms.x), p2: pOfYFromState(ms.y) }
-      ms.pending = undefined
-      ms.mode = 'idle'
-    } else if (ms.mode === 'pan' || ms.mode === 'drag') {
+    if (ms.mode === 'pan' || ms.mode === 'drag') {
       ms.mode = 'idle'
       ms.grab = undefined
       const cv = canvasRef.current
       if (cv) cv.style.cursor = 'crosshair'
     }
+    // линейку колёсика не отменяем на выходе из канваса —
+    // она выключится, когда колёсико будет отпущено (window mouseup)
     redraw()
   }
 
