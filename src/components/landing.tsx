@@ -383,7 +383,7 @@ export function Landing({ onLogin, onRegister, onDemo, demoLoading }: {
           </div>
           <div className="flex items-center gap-5 text-xs text-[var(--muted-foreground)]">
             <span className="flex items-center gap-1.5"><Activity className="h-3.5 w-3.5" /> v2.4.1</span>
-            <span className="flex items-center gap-1.5"><LineChart className="h-3.5 w-3.5" /> DEMO-данные</span>
+            <span className="flex items-center gap-1.5"><LineChart className="h-3.5 w-3.5" /> LIVE-данные 8 бирж</span>
             <span className="flex items-center gap-1.5"><TrendingUp className="h-3.5 w-3.5" /> 2026</span>
           </div>
         </div>

@@ -1,14 +1,18 @@
 import { create } from 'zustand'
 import type {
   AppNotification, ArbOpportunity, ConnectRow, DensityEvent, EngineStats,
-  FearGreed, MovementAlert, NewsItem, TickerSnapshot,
+  FearGreed, MovementAlert, NewsItem, ServiceStats, TickerSnapshot,
 } from '@/engines/types'
+
+export type DataMode = 'connecting' | 'live' | 'reconnecting'
 
 export interface LiveState {
   tick: number
   sessionStart: number
   running: boolean
+  dataMode: DataMode
   tickers: Record<string, TickerSnapshot>
+  topMovers: { gainers: TickerSnapshot[]; losers: TickerSnapshot[] }
   densityEvents: Record<string, DensityEvent[]>
   movementAlerts: Record<string, MovementAlert[]>
   arbitrageOpps: ArbOpportunity[]
@@ -17,6 +21,7 @@ export interface LiveState {
   notifications: AppNotification[]
   unread: number
   stats: EngineStats
+  serviceStats: ServiceStats | null
   connects: ConnectRow[]
   notifSessionCount: number
 }
@@ -25,7 +30,9 @@ export const useLive = create<LiveState>(() => ({
   tick: 0,
   sessionStart: Date.now(),
   running: false,
+  dataMode: 'connecting',
   tickers: {},
+  topMovers: { gainers: [], losers: [] },
   densityEvents: {},
   movementAlerts: {},
   arbitrageOpps: [],
@@ -33,17 +40,21 @@ export const useLive = create<LiveState>(() => ({
   fearGreed: { value: 54, history: [], source: 'demo' },
   notifications: [],
   unread: 0,
-  stats: { ticks: 0, densities: 0, movements: 0, arbitrages: 0, news: 0, errors: 0, startedAt: Date.now(), wsClients: 24 },
+  stats: { ticks: 0, densities: 0, movements: 0, arbitrages: 0, news: 0, errors: 0, startedAt: Date.now(), wsClients: 0 },
+  serviceStats: null,
   connects: [],
   notifSessionCount: 0,
 }))
 
 export function resetLive() {
   useLive.setState({
-    tick: 0, sessionStart: Date.now(), running: false, tickers: {}, densityEvents: {},
-    movementAlerts: {}, arbitrageOpps: [], news: [], fearGreed: { value: 54, history: [], source: 'demo' },
+    tick: 0, sessionStart: Date.now(), running: false, dataMode: 'connecting', tickers: {},
+    topMovers: { gainers: [], losers: [] },
+    densityEvents: {}, movementAlerts: {}, arbitrageOpps: [], news: [],
+    fearGreed: { value: 54, history: [], source: 'demo' },
     notifications: [], unread: 0, notifSessionCount: 0,
-    stats: { ticks: 0, densities: 0, movements: 0, arbitrages: 0, news: 0, errors: 0, startedAt: Date.now(), wsClients: 24 },
+    stats: { ticks: 0, densities: 0, movements: 0, arbitrages: 0, news: 0, errors: 0, startedAt: Date.now(), wsClients: 0 },
+    serviceStats: null,
     connects: [],
   })
 }

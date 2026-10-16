@@ -1,6 +1,7 @@
 'use client'
 
 import { toast } from 'sonner'
+import { Activity, ArrowRight, ArrowUpDown, Layers, Newspaper, TrendingUp, X } from 'lucide-react'
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import { soundEngine } from './sound'
@@ -20,50 +21,69 @@ export interface EmitOptions {
   voiceText?: string
 }
 
-const SEV_STYLE: Record<NotifSeverity, { border: string; icon: string; glow: string }> = {
-  info: { border: 'l-border-[var(--acc)]', icon: 'ℹ', glow: '0 0 24px -6px var(--acc)' },
-  success: { border: 'l-border-emerald-400', icon: '▲', glow: '0 0 24px -6px #34d399' },
-  warning: { border: 'l-border-amber-400', icon: '◆', glow: '0 0 24px -6px #fbbf24' },
-  critical: { border: 'l-border-rose-500', icon: '●', glow: '0 0 28px -6px #f43f5e' },
+const SEV_STYLE: Record<NotifSeverity, { color: string; iconBg: string; label: string }> = {
+  info: { color: 'var(--acc)', iconBg: 'color-mix(in srgb, var(--acc) 14%, transparent)', label: 'ИНФО' },
+  success: { color: '#34d399', iconBg: 'rgba(52, 211, 153, 0.14)', label: 'СИГНАЛ' },
+  warning: { color: '#fbbf24', iconBg: 'rgba(251, 191, 36, 0.14)', label: 'ВАЖНО' },
+  critical: { color: '#f43f5e', iconBg: 'rgba(244, 63, 94, 0.16)', label: 'КРИТИЧНО' },
 }
 
-const TYPE_LABEL: Record<NotifType, string> = {
-  density: 'ПЛОТНОСТЬ',
-  movement: 'ДВИЖЕНИЕ',
-  arbitrage: 'АРБИТРАЖ',
-  news: 'НОВОСТЬ',
-  system: 'СИСТЕМА',
+const TYPE_META: Record<NotifType, { label: string; icon: typeof Layers }> = {
+  density: { label: 'ПЛОТНОСТЬ', icon: Layers },
+  movement: { label: 'ДВИЖЕНИЕ', icon: TrendingUp },
+  arbitrage: { label: 'АРБИТРАЖ', icon: ArrowUpDown },
+  news: { label: 'НОВОСТЬ', icon: Newspaper },
+  system: { label: 'СИСТЕМА', icon: Activity },
 }
 
 // Троттлинг тостов: не чаще 1 в 3 секунды на тип, чтобы не заливать экран
 const lastToastAt = new Map<NotifType, number>()
 const TOAST_THROTTLE_MS = 3000
 
-function NotifToast({ n }: { n: AppNotification }) {
+function NotifToast({ n, toastId, dur }: { n: AppNotification; toastId: number | string; dur: number }) {
   const sev = SEV_STYLE[n.severity]
+  const meta = TYPE_META[n.type]
+  const Icon = meta.icon
   return (
     <div
-      className="cp-toast group relative overflow-hidden rounded-xl border bg-[var(--card-solid)] shadow-lg"
-      style={{ borderLeftWidth: 3, boxShadow: sev.glow }}
+      className="cp-toast group relative w-[356px] max-w-[92vw] overflow-hidden rounded-2xl border bg-[var(--card-solid)] shadow-2xl"
+      style={{ borderColor: 'color-mix(in srgb, ' + sev.color + ' 30%, var(--border))', boxShadow: `0 18px 50px -18px ${sev.color}55, 0 8px 24px -12px rgba(0,0,0,0.6)` }}
     >
-      <div className={`absolute left-0 top-0 h-full w-[3px] ${sev.border.replace('l-border-', 'bg-')}`} />
-      <div className="flex items-start gap-3 px-4 py-3">
-        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--muted)] text-sm font-bold" style={{ color: 'var(--acc)' }}>
-          {sev.icon}
+      {/* левая полоса серьёзности */}
+      <div className="absolute inset-y-0 left-0 w-[3px]" style={{ background: `linear-gradient(180deg, ${sev.color}, color-mix(in srgb, ${sev.color} 30%, transparent))` }} />
+
+      <div className="flex items-start gap-3 px-4 pb-3 pt-3.5 pl-5">
+        <div
+          className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border"
+          style={{ background: sev.iconBg, borderColor: `color-mix(in srgb, ${sev.color} 30%, transparent)`, color: sev.color }}
+        >
+          <Icon className="h-[18px] w-[18px]" strokeWidth={2.2} />
         </div>
+
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold tracking-widest" style={{ color: 'var(--acc)' }}>{TYPE_LABEL[n.type]}</span>
-            <span className="text-[10px] text-[var(--muted-foreground)]">
+            <span className="text-[9px] font-black tracking-[0.14em]" style={{ color: sev.color }}>{meta.label}</span>
+            <span className="rounded border border-[var(--border)] bg-[var(--muted)] px-1 py-px text-[8px] font-black tracking-wider text-[var(--muted-foreground)]">{sev.label}</span>
+            <span className="cp-num ml-auto text-[10px] text-[var(--muted-foreground)]">
               {new Date(n.time).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </span>
           </div>
-          <div className="mt-0.5 truncate text-sm font-semibold text-[var(--fg)]">{n.title}</div>
-          <div className="mt-0.5 text-xs leading-snug text-[var(--muted-foreground)]">{n.message}</div>
+          <div className="mt-1 break-words text-[13px] font-bold leading-snug text-[var(--foreground)]">{n.title}</div>
+          {n.message && <div className="mt-0.5 text-[11px] leading-snug text-[var(--muted-foreground)]">{n.message}</div>}
         </div>
+
+        <button
+          onClick={() => toast.dismiss(toastId)}
+          className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+          aria-label="Закрыть уведомление"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
       </div>
-      <div className="h-[2px] w-full bg-[var(--border)]">
-        <div className="h-full animate-cp-toastbar" style={{ background: 'var(--acc)' }} />
+
+      {/* полоса прогресса */}
+      <div className="h-[2.5px] w-full bg-[var(--border)]" style={{ animationDuration: `${dur}ms` }}>
+        <div className="animate-cp-toastbar h-full" style={{ background: `linear-gradient(90deg, ${sev.color}, color-mix(in srgb, ${sev.color} 40%, transparent))` }} />
       </div>
     </div>
   )
@@ -99,7 +119,7 @@ export function emitNotification(opts: EmitOptions) {
     if (Date.now() - last > TOAST_THROTTLE_MS) {
       lastToastAt.set(opts.type, Date.now())
       const dur = Math.max(2, Math.min(15, app.toasts.duration)) * 1000
-      toast.custom(() => <NotifToast n={n} />, { duration: dur })
+      toast.custom((id) => <NotifToast n={n} toastId={id} dur={dur} />, { duration: dur })
     }
   }
   if (prefs.sound) {
@@ -112,19 +132,13 @@ export function emitNotification(opts: EmitOptions) {
 }
 
 export function toastInfo(title: string, message?: string) {
-  toast.custom(() => <NotifToast n={{ id: uid('nf'), type: 'system', severity: 'info', title, message: message ?? '', time: Date.now(), read: false }} />, {
-    duration: 4000,
-  })
+  toast.custom((id) => <NotifToast n={{ id: uid('nf'), type: 'system', severity: 'info', title, message: message ?? '', time: Date.now(), read: false }} toastId={id} dur={4000} />, { duration: 4000 })
 }
 
 export function toastSuccess(title: string, message?: string) {
-  toast.custom(() => <NotifToast n={{ id: uid('nf'), type: 'system', severity: 'success', title, message: message ?? '', time: Date.now(), read: false }} />, {
-    duration: 4000,
-  })
+  toast.custom((id) => <NotifToast n={{ id: uid('nf'), type: 'system', severity: 'success', title, message: message ?? '', time: Date.now(), read: false }} toastId={id} dur={4000} />, { duration: 4000 })
 }
 
 export function toastError(title: string, message?: string) {
-  toast.custom(() => <NotifToast n={{ id: uid('nf'), type: 'system', severity: 'critical', title, message: message ?? '', time: Date.now(), read: false }} />, {
-    duration: 5000,
-  })
+  toast.custom((id) => <NotifToast n={{ id: uid('nf'), type: 'system', severity: 'critical', title, message: message ?? '', time: Date.now(), read: false }} toastId={id} dur={5000} />, { duration: 5000 })
 }

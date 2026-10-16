@@ -35,12 +35,12 @@ const NAV: NavItem[] = [
 
 const VIEW_META: Record<ViewId, { title: string; subtitle: string }> = {
   home: { title: 'Главная', subtitle: 'Обзор рынка: топы, страх и жадность, последние сигналы' },
-  densities: { title: 'Плотности', subtitle: 'Крупные лимитные заявки · одно окно = одна биржа' },
+  densities: { title: 'Плотности', subtitle: '' },
   arbitrage: { title: 'Арбитраж', subtitle: 'Межбиржевые спреды в реальном времени' },
-  movements: { title: 'Движения', subtitle: 'Binance · Bybit · OKX · фьючерсы и спот' },
+  movements: { title: 'Движения', subtitle: 'Binance · Bybit · OKX · фьючерсы и спот · настройки в шестерёнке у окна' },
   news: { title: 'Новости', subtitle: 'События, влияющие на крипторынок' },
   notifications: { title: 'Уведомления', subtitle: 'Полный журнал сигналов сессии' },
-  monitor: { title: 'Монитор', subtitle: 'Телеметрия сервера, движков и коннектов' },
+  monitor: { title: 'Монитор', subtitle: 'Телеметрия market-сервера, движков и коннектов' },
   users: { title: 'Пользователи', subtitle: 'Управление аккаунтами и ролями' },
   settings: { title: 'Настройки', subtitle: 'Профиль, оформление, звуки и данные' },
 }
@@ -51,6 +51,7 @@ export function Dashboard({ children }: { children: ReactElement }) {
   const setView = useApp((s) => s.setView)
   const unread = useLive((s) => s.unread)
   const running = useLive((s) => s.running)
+  const dataMode = useLive((s) => s.dataMode)
   const [mobileOpen, setMobileOpen] = useState(false)
 
   // Синхронизация вида с hash
@@ -122,12 +123,15 @@ export function Dashboard({ children }: { children: ReactElement }) {
   const sidebarFooter = (
     <div className="border-t border-[var(--border)] p-3">
       <div className="flex items-center gap-2 rounded-xl bg-[var(--muted)] px-3 py-2.5">
-        <span className={cn('h-2 w-2 shrink-0 rounded-full', running && 'cp-pulse-dot')} style={{ background: running ? 'var(--pos)' : 'var(--muted-foreground)' }} />
+        <span
+          className={cn('h-2 w-2 shrink-0 rounded-full', running && dataMode === 'live' && 'cp-pulse-dot')}
+          style={{ background: dataMode === 'live' ? 'var(--pos)' : '#f59e0b' }}
+        />
         <div className="min-w-0 flex-1 leading-tight">
-          <div className="text-[11px] font-bold">{running ? 'Движки активны' : 'Остановка…'}</div>
-          <div className="text-[10px] text-[var(--muted-foreground)]">8 бирж · F+S · DEMO</div>
+          <div className="text-[11px] font-bold">{dataMode === 'live' ? 'Поток данных активен' : dataMode === 'reconnecting' ? 'Переподключение…' : 'Подключение…'}</div>
+          <div className="text-[10px] text-[var(--muted-foreground)]">8 бирж · F+S · LIVE</div>
         </div>
-        <span className="cp-num text-[10px] font-bold text-[var(--muted-foreground)]">v2.4.1</span>
+        <span className="cp-num text-[10px] font-bold text-[var(--muted-foreground)]">v3.0.0</span>
       </div>
     </div>
   )

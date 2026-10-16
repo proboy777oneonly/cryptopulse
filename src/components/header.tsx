@@ -229,21 +229,28 @@ export function ProfileMenu() {
 export function DashboardHeader({ title, subtitle }: { title: string; subtitle: string }) {
   const uptime = useUptime()
   const running = useLive((s) => s.running)
+  const dataMode = useLive((s) => s.dataMode)
+  const live = dataMode === 'live'
   return (
     <header className="sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between gap-3 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--background)_82%,transparent)] px-4 backdrop-blur-xl sm:px-6">
       <div className="min-w-0">
         <motion.h1 key={title} initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="truncate text-lg font-bold tracking-tight">
           {title}
         </motion.h1>
-        <div className="truncate text-xs text-[var(--muted-foreground)]">{subtitle}</div>
+        {subtitle && <div className="truncate text-xs text-[var(--muted-foreground)]">{subtitle}</div>}
       </div>
       <div className="flex items-center gap-2 sm:gap-3">
         <div className="hidden items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 py-2 sm:flex" title="Аптайм сессии движков">
-          <span className={cn('h-1.5 w-1.5 rounded-full', running && 'cp-pulse-dot')} style={{ background: running ? 'var(--pos)' : 'var(--muted-foreground)' }} />
+          <span className={cn('h-1.5 w-1.5 rounded-full', running && live && 'cp-pulse-dot')} style={{ background: live ? 'var(--pos)' : '#f59e0b' }} />
           <span className="cp-num text-xs font-bold">{uptime}</span>
         </div>
-        <span className="rounded-lg border border-[color-mix(in_srgb,var(--acc)_35%,transparent)] bg-[color-mix(in_srgb,var(--acc)_10%,transparent)] px-2 py-1 text-[10px] font-black tracking-widest" style={{ color: 'var(--acc)' }}>
-          DEMO
+        <span
+          className="rounded-lg border px-2 py-1 text-[10px] font-black tracking-widest"
+          style={live
+            ? { borderColor: 'color-mix(in srgb, var(--pos) 40%, transparent)', background: 'color-mix(in srgb, var(--pos) 10%, transparent)', color: 'var(--pos)' }
+            : { borderColor: 'color-mix(in srgb, #f59e0b 40%, transparent)', background: 'color-mix(in srgb, #f59e0b 10%, transparent)', color: '#f59e0b' }}
+        >
+          {live ? 'LIVE' : 'ОЖИД'}
         </span>
         <NotificationBell />
         <ProfileMenu />

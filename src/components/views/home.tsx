@@ -11,6 +11,7 @@ import { AnimatedNumber, EmptyState, ExBadge, FearGreedGauge, Pct, SlideBar, Spa
 export function HomeView() {
   const setView = useApp((s) => s.setView)
   const tickers = useLive((s) => s.tickers)
+  const topMovers = useLive((s) => s.topMovers)
   const fearGreed = useLive((s) => s.fearGreed)
   const notifications = useLive((s) => s.notifications)
   const stats = useLive((s) => s.stats)
@@ -20,6 +21,11 @@ export function HomeView() {
   const uptime = useUptime()
 
   const { gainers, losers } = useMemo(() => {
+    // основной источник — реальные топы с market-сервиса;
+    // до их прихода — то, что накопилось в потоке тикеров
+    if (topMovers.gainers.length > 0 || topMovers.losers.length > 0) {
+      return { gainers: topMovers.gainers, losers: topMovers.losers }
+    }
     const all = Object.values(tickers)
     const liquid = all.filter((t) => t.vol24h >= 20e6)
     const bySymbol = new Map<string, TickerSnapshot>()
@@ -28,10 +34,11 @@ export function HomeView() {
       if (!prev || t.vol24h > prev.vol24h) bySymbol.set(t.symbol, t)
     }
     const arr = [...bySymbol.values()]
-    const gainers = [...arr].sort((a, b) => b.change24hPct - a.change24hPct).slice(0, 8)
-    const losers = [...arr].sort((a, b) => a.change24hPct - b.change24hPct).slice(0, 8)
-    return { gainers, losers }
-  }, [tickers])
+    return {
+      gainers: [...arr].sort((a, b) => b.change24hPct - a.change24hPct).slice(0, 8),
+      losers: [...arr].sort((a, b) => a.change24hPct - b.change24hPct).slice(0, 8),
+    }
+  }, [tickers, topMovers])
 
   const activeDensities = useMemo(
     () => Object.values(densityEvents).reduce((acc, list) => acc + list.length, 0),
@@ -171,9 +178,9 @@ export function HomeView() {
               </div>
             </div>
             <div className="rounded-xl border border-[var(--border)] bg-[var(--muted)] p-4">
-              <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)]">Обработано тиков</div>
-              <div className="cp-num mt-1 text-2xl font-black">{stats.ticks.toLocaleString('ru-RU')}</div>
-              <div className="mt-1 text-[11px] text-[var(--muted-foreground)]">{Object.keys(tickers).length} тикеров в потоке</div>
+              <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)]">Тикеров в потоке</div>
+              <div className="cp-num mt-1 text-2xl font-black">{Object.keys(tickers).length > 0 ? Object.keys(tickers).length.toLocaleString('ru-RU') : '…'}</div>
+              <div className="mt-1 text-[11px] text-[var(--muted-foreground)]">реальные данные 8 бирж · F+S</div>
             </div>
           </div>
           <div className="mt-3 space-y-2">

@@ -152,6 +152,7 @@ export interface ArbitrageConfig {
   minSpreadPct: number
   minVol24h: number
   mode: MarketType
+  cooldownSec: number
   exchanges: Record<ExchangeId, boolean>
 }
 
@@ -240,6 +241,62 @@ export interface ConnectRow {
   booksTotal: number
   uptime: number
   lastMsg: number
+}
+
+
+// ─── Реальные данные market-сервиса ─────────────────────────────────
+
+/** Строка спреда межбиржевого арбитража */
+export interface SpreadRow {
+  symbol: string
+  buyEx: ExchangeId
+  buyPrice: number
+  sellEx: ExchangeId
+  sellPrice: number
+  spreadPct: number
+  vol24h: number
+}
+
+/** Телеметрия market-сервиса (монитор) */
+export interface ServiceSysStats {
+  appVersion: string
+  nodeVersion: string
+  platform: string
+  cpuModel: string
+  cpuCores: number
+  cpuLoadPct: number[]
+  loadAvg: number[]
+  eventLoopLagMs: number
+  rss: number
+  heapUsed: number
+  heapTotal: number
+  external: number
+  systemMemTotal: number
+  systemMemFree: number
+  processPid: number
+  uptime: number
+  serverTime: string
+}
+
+export interface ServiceStats {
+  ticks: number
+  walls: number
+  movers: number
+  spreads: number
+  news: number
+  errors: number
+  startedAt: number
+  wsClients: number
+  symbols: number
+  sys: ServiceSysStats
+}
+
+/** Строка символа для комбобокса */
+export interface SymbolRow {
+  symbol: string
+  price: number
+  vol24h: number
+  change24hPct: number
 }
 
 // ─── Утилиты ──────────────────────────────────────────────────────────

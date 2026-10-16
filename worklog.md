@@ -45,3 +45,37 @@ Work Log:
 
 Stage Summary:
 - App fully verified and working. DEMO data mode. Admin: admin@screen.io / admin123
+
+---
+Task ID: 12
+Agent: main
+Task: Перевод на реальные данные 8 бирж + UI-правки (тосты, плотности, движения, арбитраж cooldown)
+
+Work Log:
+- Создан mini-services/market-service (порт 3003, socket.io, path '/'):
+  - Тикеры: REST-поллинг BYBIT/OKX/GATE/BITGET/KUKOIN/HL/ASTER; Binance — WebSocket
+    (спот !miniTicker@arr; фьючерсы bookTicker + depth-диффы, объёмы — прокси с соседних бирж,
+    т.к. fapi REST забанен по IP песочницы, тикер-стримы fapi закрыты)
+  - KuCoin spot стаканы — WS /market/level2 инкременты (REST стал приватным)
+  - HL — WS allMids + l2Book (обход 429)
+  - Детектор стен ≥$250K в 8% глубине, top-40 символов на комбинацию, re-emit при росте ×1.6
+  - Реальные RSS-новости (CoinTelegraph, CoinDesk, Decrypt, The Block, BitcoinMagazine, crypto.news)
+  - Fear&Greed с alternative.me; телеметрия CPU/RSS/heap/eventloop/ws-clients
+- Клиент: hub.ts переписан на socket.io ('/?XTransformPort=3003'), movers/walls/spreads/top/
+  connects/stats события; density/movement/arbitrage движки считают по фильтрам пользователя
+- Исправлены баги: KUCOIN→KUKOIN (id биржи), двойная нормализация символов HL/KuCoin F,
+  гонка setLoading в useSymbols, нестабильные селекторы zustand (?? [] → EMPTY_EVENTS),
+  ширина диалогов (sm:max-w-lg перекрывал), комбинированные стримы Binance молчали → raw /ws
+- UI: тумблер F/S/ALL у окна плотностей, «N окон · 1 окно = 1 биржа» + «N активных» в тулбаре,
+  комбобокс с поиском тикеров (Command), настройки окна шире и читабельнее ($M-суффиксы видны),
+  настройки движений в шестерёнке у окна, кулдаун арбитража (15–600с слайдер),
+  редизайн тостов (иконки lucide, severity-цвета, прогресс-бар, кнопка закрытия)
+- LIVE-режим: бейдж LIVE в хедере, топы/home из topMovers, монитор на телеметрии сервиса,
+  новости со ссылками на источники
+- E2E через Caddy (:81): все 9 вкладок, реальная телеметрия 14/14 коннектов, 8.7k символов,
+  реальные плотности/движения (39 алертов при тестовом пороге 0.3%)/арбитраж (SIRENUSDT 1.22%),
+  4 темы, тосты, VLM-проверка скриншотов; eslint 0 ошибок
+
+Stage Summary:
+- Приложение полностью на реальных данных 8 бирж (F+S). Market-service: /home/z/my-project/mini-services/market-service (bun run dev, лог service.log)
+- Админ: admin@screen.io / admin123. Версия 3.0.0

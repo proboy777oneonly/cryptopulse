@@ -132,6 +132,7 @@ function defaultArbitrage(): ArbitrageConfig {
     minSpreadPct: 0.6,
     minVol24h: 10e6,
     mode: 'F',
+    cooldownSec: 120,
     exchanges: Object.fromEntries(EXCHANGES.map((e) => [e.id, true])) as Record<string, boolean> as ArbitrageConfig['exchanges'],
   }
 }
@@ -297,7 +298,7 @@ export const useApp = create<AppState>()(
           lastSyncedAt: get().lastSyncedAt,
           densityWindows: Array.isArray(data.densityWindows) && data.densityWindows.length > 0 ? (data.densityWindows as DensityWindowConfig[]) : d.densityWindows,
           movementWindows: Array.isArray(data.movementWindows) && data.movementWindows.length > 0 ? (data.movementWindows as MovementWindowConfig[]) : d.movementWindows,
-          arbitrage: data.arbitrage ? (data.arbitrage as ArbitrageConfig) : d.arbitrage,
+          arbitrage: data.arbitrage ? { ...d.arbitrage, ...(data.arbitrage as ArbitrageConfig) } : d.arbitrage,
         })
       },
 

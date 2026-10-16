@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, type CSSProperties } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowRight, Gauge, Repeat, Settings2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
@@ -30,21 +30,39 @@ export function ArbitrageView() {
         <div className="mt-4 space-y-3.5">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label className="text-[11px] text-[var(--muted-foreground)]">Мин. спред, %</Label>
+              <Label className="text-[11px] font-semibold text-[var(--muted-foreground)]">Мин. спред, %</Label>
               <Input
                 type="number" step={0.1} min={0} value={arbitrage.minSpreadPct}
                 onChange={(e) => updateArbitrage({ minSpreadPct: Number(e.target.value) })}
-                className="cp-num"
+                className="h-11 rounded-xl border-[var(--border)] bg-[var(--card)] text-[15px] font-bold text-[var(--foreground)] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-[11px] text-[var(--muted-foreground)]">Мин. объём 24ч, $M</Label>
-              <Input
-                type="number" step={1} min={0} value={arbitrage.minVol24h / 1e6}
-                onChange={(e) => updateArbitrage({ minVol24h: Number(e.target.value) * 1e6 })}
-                className="cp-num"
-              />
+              <Label className="text-[11px] font-semibold text-[var(--muted-foreground)]">Мин. объём 24ч</Label>
+              <div className="relative">
+                <Input
+                  type="number" step={1} min={0} value={arbitrage.minVol24h / 1e6}
+                  onChange={(e) => updateArbitrage({ minVol24h: Number(e.target.value) * 1e6 })}
+                  className="h-11 rounded-xl border-[var(--border)] bg-[var(--card)] pr-14 text-[15px] font-bold text-[var(--foreground)] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                />
+                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-[var(--border)] bg-[var(--muted)] px-1.5 py-0.5 text-[10px] font-black text-[var(--muted-foreground)]">$M</span>
+              </div>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label className="text-[11px] font-semibold text-[var(--muted-foreground)]">Кулдаун уведомлений</Label>
+              <span className="cp-num text-sm font-black" style={{ color: 'var(--acc)' }}>{arbitrage.cooldownSec} с</span>
+            </div>
+            <input
+              type="range" min={15} max={600} step={15} value={arbitrage.cooldownSec}
+              onChange={(e) => updateArbitrage({ cooldownSec: Number(e.target.value) })}
+              className="cp-range w-full"
+              style={{ '--fill': `${((arbitrage.cooldownSec - 15) / 585) * 100}%` } as CSSProperties}
+              aria-label="Кулдаун уведомлений арбитража"
+            />
+            <p className="text-[10px] leading-tight text-[var(--muted-foreground)]">Минимальный интервал между сигналами по одной монете — защита от спама тостов и звуков</p>
           </div>
 
           <div className="space-y-1.5">
@@ -93,7 +111,7 @@ export function ArbitrageView() {
         </div>
 
         <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--muted)] p-3 text-[10px] leading-relaxed text-[var(--muted-foreground)]">
-          Сканер сравнивает цены одной монеты на выбранных биржах каждые 2 секунды.
+          Сканер сравнивает реальные цены одной монеты на выбранных биржах каждые 6 секунд.
           Учитывайте комиссии вывода и перевода — чистый спред ниже биржевого.
         </div>
       </div>

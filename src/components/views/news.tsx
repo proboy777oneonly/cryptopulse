@@ -95,7 +95,7 @@ export function NewsView() {
       {/* Список */}
       {filtered.length === 0 ? (
         <div className="cp-border-glow rounded-2xl bg-card">
-          <EmptyState icon={<Newspaper className="h-10 w-10" />} title="Новостей по фильтрам нет" hint="Движок новостей генерирует события каждые 25–70 секунд" />
+          <EmptyState icon={<Newspaper className="h-10 w-10" />} title="Новостей по фильтрам нет" hint="Реальные RSS-ленты обновляются каждые 3 минуты" />
         </div>
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
@@ -120,18 +120,29 @@ export function NewsView() {
                       {imp.label}
                     </span>
                     <span className="rounded-md border border-[var(--border)] px-2 py-0.5 text-[9px] font-bold text-[var(--muted-foreground)]">{n.category}</span>
-                    <span className="ml-auto text-[10px] text-[var(--muted-foreground)]">{timeAgo(n.time)} · {n.source}</span>
+                    <a
+                      href={(n as { link?: string }).link ?? '#'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-auto flex items-center gap-1 text-[10px] font-semibold transition-opacity hover:opacity-80"
+                      style={{ color: 'var(--acc)' }}
+                      title="Открыть источник"
+                    >
+                      {timeAgo(n.time)} · {n.source} ↗
+                    </a>
                   </div>
                   <h3 className="mt-2.5 text-sm font-bold leading-snug">{n.title}</h3>
                   <p className="mt-1.5 text-xs leading-relaxed text-[var(--muted-foreground)]">{n.summary}</p>
-                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                    <span className="text-[10px] text-[var(--muted-foreground)]">влияет на:</span>
-                    {n.affects.map((a) => (
-                      <span key={a} className="rounded-full px-2 py-0.5 text-[9px] font-bold" style={{ background: 'color-mix(in srgb, var(--acc) 12%, transparent)', color: 'var(--acc)' }}>
-                        {a}
-                      </span>
-                    ))}
-                  </div>
+                  {n.affects.length > 0 && (
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] text-[var(--muted-foreground)]">влияет на:</span>
+                      {n.affects.map((a) => (
+                        <span key={a} className="rounded-full px-2 py-0.5 text-[9px] font-bold" style={{ background: 'color-mix(in srgb, var(--acc) 12%, transparent)', color: 'var(--acc)' }}>
+                          {a}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </motion.article>
               )
             })}

@@ -1,13 +1,53 @@
-import { MarketSim } from './market'
-import { generateNews, initialNews } from './news'
+'use client'
+
+import { io, type Socket } from 'socket.io-client'
 import { emitNotification } from './notifier'
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import {
   exName, fmtUsd, uid,
   type ConnectRow, type DensityEvent, type ExchangeId, type MarketType, type MovementAlert,
+  type NewsItem, type ServiceStats, type SpreadRow, type SymbolRow, type TickerSnapshot,
 } from './types'
 import { voiceTextArbitrage, voiceTextDensity, voiceTextMovement, voiceTextNews } from './voice'
+
+// ─── Типы строк реального потока ─────────────────────────────────────
+
+export interface MoverRow {
+  key: string
+  ex: ExchangeId
+  m: MarketType
+  symbol: string
+  price: number
+  open24h: number
+  open1m: number
+  open5m: number
+  vol24h: number
+  change24hPct: number
+  change1mPct: number
+  change5mPct: number
+}
+
+export interface WallRow {
+  id: string
+  ex: ExchangeId
+  m: MarketType
+  symbol: string
+  side: 'BID' | 'ASK'
+  price: number
+  notionalUsd: number
+  distPct: number
+  vol24h: number
+  ts: number
+}
+
+interface HelloPayload {
+  service: { version: string; startedAt: number }
+  fg: { value: number; history: number[]; source: 'live' } | null
+  news: NewsItem[]
+  top: { gainers: MoverRow[]; losers: MoverRow[] }
+  symbols: number
+}
 
 interface ArbKeyState {
   symbol: string
@@ -16,393 +56,399 @@ interface ArbKeyState {
   spreadPct: number
   vol24h: number
   time: number
-  lastNotified: number
 }
 
 /**
- * Центральный хаб: тикает каждую секунду, гонит рынок, плотности, движения,
- * арбитраж, новости, телеметрию. Singleton с защитой от HMR.
+ * Центральный хаб клиента: подключается к market-сервису (порт 3003 за
+ * Caddy-гейтвеем), получает реальные данные 8 бирж и раздаёт их в сторы.
+ * Плотности/движения/арбитраж считаются по пользовательским фильтрам.
+ * Singleton с защитой от HMR.
  */
 export class EngineHub {
-  sim = new MarketSim()
+  private socket: Socket | null = null
   private timer: ReturnType<typeof setInterval> | null = null
   private tickCount = 0
-  private nextNewsAt = Date.now() + 20_000
-  private nextFgAt = Date.now() + 20_000
-  private fgValue = 40 + Math.random() * 40
-  private fgHistory: number[] = []
   private movementCooldown = new Map<string, number>()
   private arbActive = new Map<string, ArbKeyState>()
   private arbCooldown = new Map<string, number>()
-  private fgFetched = false
-  stats = { ticks: 0, densities: 0, movements: 0, arbitrages: 0, news: 0, errors: 0, startedAt: Date.now(), wsClients: 24 }
-  connects: ConnectRow[] = []
+  private sparkHistory = new Map<string, number[]>()
+  private symbolCache = new Map<string, { rows: SymbolRow[]; at: number }>()
+  private lastMoversAt = 0
+  private warnedOffline = false
+  stats = { ticks: 0, densities: 0, movements: 0, arbitrages: 0, news: 0, errors: 0, startedAt: Date.now(), wsClients: 0 }
 
-  constructor() {
-    const news = initialNews(14)
-    this.fgHistory = Array.from({ length: 30 }, (_, i) => 40 + Math.random() * 30 + Math.sin(i / 4) * 8)
-    this.fgValue = this.fgHistory[this.fgHistory.length - 1]
-    useLive.setState({ news, fearGreed: { value: Math.round(this.fgValue), history: this.fgHistory, source: 'demo' } })
-    this.initConnects()
-  }
-
-  private initConnects() {
-    const rows: ConnectRow[] = []
-    const exs: ExchangeId[] = ['BINANCE', 'BYBIT', 'OKX', 'GATE', 'BITGET', 'KUKOIN', 'HL', 'ASTER']
-    for (const ex of exs) {
-      for (const m of ['F', 'S'] as MarketType[]) {
-        const total = this.sim.coinsOn(ex, m).length
-        rows.push({
-          id: `${ex}_${m}`,
-          exchange: ex,
-          market: m,
-          status: Math.random() < 0.08 ? 'degraded' : 'online',
-          latencyMs: 9 + Math.random() * 38,
-          msgsPerSec: 60 + Math.random() * 160,
-          booksLive: total,
-          booksTotal: total,
-          uptime: 3600 * (2 + Math.random() * 60),
-          lastMsg: Date.now(),
-        })
-      }
-    }
-    this.connects = rows
-  }
+  // ─── Жизненный цикл ────────────────────────────────────────────────
 
   start() {
-    if (this.timer) return
+    if (this.socket) return
     this.stats.startedAt = Date.now()
-    useLive.setState({ sessionStart: Date.now(), running: true })
-    void this.fetchFearGreed()
-    this.timer = setInterval(() => this.step(), 1000)
-    this.step()
-    emitNotification({
-      type: 'system', severity: 'info',
-      title: 'Движки запущены',
-      message: 'Подключение к 8 биржам установлено · режим DEMO',
+    useLive.setState({ sessionStart: Date.now(), running: true, dataMode: 'connecting' })
+
+    const socket = io('/?XTransformPort=3003', {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 2000,
+      timeout: 12_000,
     })
+    this.socket = socket
+
+    socket.on('connect', () => {
+      const wasOffline = useLive.getState().dataMode !== 'live'
+      useLive.setState({ dataMode: 'live' })
+      this.warnedOffline = false
+      if (wasOffline && this.tickCount > 3) {
+        emitNotification({
+          type: 'system', severity: 'success',
+          title: 'Соединение восстановлено',
+          message: 'Поток данных 8 бирж снова активен',
+        })
+      }
+    })
+
+    socket.on('disconnect', () => {
+      useLive.setState({ dataMode: 'reconnecting' })
+      if (!this.warnedOffline) {
+        this.warnedOffline = true
+        emitNotification({
+          type: 'system', severity: 'warning',
+          title: 'Market-сервер недоступен',
+          message: 'Переподключение к потоку данных…',
+        })
+      }
+    })
+
+    socket.on('hello', (d: HelloPayload) => {
+      if (d.news?.length) useLive.setState({ news: d.news })
+      if (d.fg) useLive.setState({ fearGreed: { value: d.fg.value, history: d.fg.history, source: 'live' } })
+      if (d.top) this.applyTop(d.top)
+      if (this.tickCount === 0 && d.symbols > 0) {
+        emitNotification({
+          type: 'system', severity: 'success',
+          title: 'Подключено к реальным данным',
+          message: `8 бирж · F+S · ${d.symbols.toLocaleString('ru-RU')} тикеров в потоке`,
+        })
+      }
+    })
+
+    socket.on('movers', (rows: MoverRow[]) => this.handleMovers(rows))
+    socket.on('top', (d: { gainers: MoverRow[]; losers: MoverRow[] }) => this.applyTop(d))
+    socket.on('walls', (rows: WallRow[]) => this.handleWalls(rows))
+    socket.on('spreads', (d: { F: SpreadRow[]; S: SpreadRow[] }) => this.handleSpreads(d))
+    socket.on('fg', (d: { value: number; history: number[]; source: 'live' }) => {
+      useLive.setState({ fearGreed: { value: d.value, history: d.history, source: 'live' } })
+    })
+    socket.on('news', (fresh: NewsItem[]) => this.handleNews(fresh))
+    socket.on('connects', (rows: ConnectRow[]) => useLive.setState({ connects: rows }))
+    socket.on('stats', (d: ServiceStats) => useLive.setState({ serviceStats: d }))
+
+    // UI-тик раз в секунду: счётчики, чистка истёкших плотностей
+    this.timer = setInterval(() => this.uiTick(), 1000)
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+    this.socket?.disconnect()
+    this.socket = null
     this.movementCooldown.clear()
     this.arbActive.clear()
     useLive.setState({ running: false })
   }
 
-  private async fetchFearGreed() {
-    if (this.fgFetched) return
-    this.fgFetched = true
-    try {
-      const ctrl = new AbortController()
-      const to = setTimeout(() => ctrl.abort(), 3500)
-      const res = await fetch('https://api.alternative.me/fng/?limit=30', { signal: ctrl.signal })
-      clearTimeout(to)
-      if (res.ok) {
-        const json = await res.json()
-        const data = json?.data
-        if (Array.isArray(data) && data.length > 0) {
-          const hist = data.map((d: { value: string }) => Number(d.value)).reverse()
-          this.fgHistory = hist
-          this.fgValue = hist[hist.length - 1]
-          useLive.setState({ fearGreed: { value: Math.round(this.fgValue), history: hist, source: 'live' } })
-          return
+  // ─── Символы биржи для комбобоксов ─────────────────────────────────
+
+  async fetchSymbols(ex: ExchangeId, m: MarketType): Promise<SymbolRow[]> {
+    const key = `${ex}_${m}`
+    const cached = this.symbolCache.get(key)
+    if (cached && Date.now() - cached.at < 60_000) return cached.rows
+    return new Promise<SymbolRow[]>((resolve) => {
+      const socket = this.socket
+      if (!socket) { resolve([]); return }
+      const emitOnce = () => {
+        const to = setTimeout(() => resolve([]), 8000)
+        socket.emit('getSymbols', { ex, m }, (rows: SymbolRow[]) => {
+          clearTimeout(to)
+          const list = Array.isArray(rows) ? rows : []
+          this.symbolCache.set(key, { rows: list, at: Date.now() })
+          resolve(list)
+        })
+      }
+      if (socket.connected) {
+        emitOnce()
+      } else {
+        // ждём подключения сокета до 10 секунд
+        const waitTo = setTimeout(() => { socket.off('connect', onConn); resolve([]) }, 10_000)
+        const onConn = () => { clearTimeout(waitTo); emitOnce() }
+        socket.once('connect', onConn)
+      }
+    })
+  }
+
+  sparkline(sym: string): number[] {
+    return this.sparkHistory.get(sym) ?? []
+  }
+
+  // ─── Обработчики потока ────────────────────────────────────────────
+
+  private uiTick() {
+    this.tickCount += 1
+    this.stats.ticks = this.tickCount
+
+    // чистка истёкших плотностей
+    const now = Date.now()
+    const de = useLive.getState().densityEvents
+    let changed = false
+    for (const id of Object.keys(de)) {
+      const filtered = de[id].filter((e) => e.expiresAt > now)
+      if (filtered.length !== de[id].length) { de[id] = filtered; changed = true }
+    }
+    if (changed) useLive.setState({ densityEvents: { ...de } })
+
+    useLive.setState({ tick: this.tickCount, stats: { ...this.stats } })
+  }
+
+  private pushSpark(symbol: string, price: number) {
+    let h = this.sparkHistory.get(symbol)
+    if (!h) { h = []; this.sparkHistory.set(symbol, h) }
+    h.push(price)
+    if (h.length > 120) h.shift()
+  }
+
+  private handleMovers(rows: MoverRow[]) {
+    this.lastMoversAt = Date.now()
+    const tickers = { ...useLive.getState().tickers }
+    for (const r of rows) {
+      const t: TickerSnapshot = {
+        key: r.key, exchange: r.ex, market: r.m, symbol: r.symbol,
+        price: r.price, open24h: r.open24h, open1m: r.open1m, open5m: r.open5m,
+        vol24h: r.vol24h, change24hPct: r.change24hPct, change1mPct: r.change1mPct, change5mPct: r.change5mPct,
+        bias: 0,
+      }
+      tickers[r.key] = t
+      this.pushSpark(r.symbol, r.price)
+    }
+    useLive.setState({ tickers })
+    this.movementTick(rows)
+  }
+
+  private applyTop(d: { gainers: MoverRow[]; losers: MoverRow[] }) {
+    const conv = (r: MoverRow): TickerSnapshot => ({
+      key: r.key, exchange: r.ex, market: r.m, symbol: r.symbol,
+      price: r.price, open24h: r.open24h, open1m: r.open1m, open5m: r.open5m,
+      vol24h: r.vol24h, change24hPct: r.change24hPct, change1mPct: r.change1mPct, change5mPct: r.change5mPct,
+      bias: 0,
+    })
+    useLive.setState({ topMovers: { gainers: d.gainers.map(conv), losers: d.losers.map(conv) } })
+  }
+
+  // ── Движения: пороги пользователя на реальном потоке ──────────────
+
+  private movementTick(rows: MoverRow[]) {
+    const { movementWindows } = useApp.getState()
+    if (movementWindows.length === 0) return
+    const now = Date.now()
+    const prevAll = useLive.getState().movementAlerts
+    let alertsChanged = false
+    const alertsByWin: Record<string, MovementAlert[]> = {}
+
+    for (const win of movementWindows) {
+      let alerts = prevAll[win.id] ? [...prevAll[win.id]] : []
+      if (win.enabled) {
+        for (const row of rows) {
+          if (!win.markets[`${row.ex}_${row.m}` as keyof typeof win.markets]) continue
+          const change = win.period === '1m' ? row.change1mPct : win.period === '5m' ? row.change5mPct : row.change24hPct
+          if (!Number.isFinite(change)) continue
+          if (win.direction === 'up' && change <= 0) continue
+          if (win.direction === 'down' && change >= 0) continue
+          const rule = win.coinRules.find((r) => r.symbol === row.symbol)
+          const threshold = rule?.pct ?? win.thresholdPct
+          if (Math.abs(change) < threshold) continue
+          if (row.vol24h < win.minVol24h) continue
+
+          const cdKey = `${win.id}|${row.ex}|${row.m}|${row.symbol}`
+          const last = this.movementCooldown.get(cdKey) ?? 0
+          if (now - last < win.cooldownSec * 1000) continue
+          this.movementCooldown.set(cdKey, now)
+
+          const alert: MovementAlert = {
+            id: uid('mv'),
+            windowId: win.id,
+            exchange: row.ex,
+            market: row.m,
+            symbol: row.symbol,
+            period: win.period,
+            changePct: Math.round(change * 100) / 100,
+            price: row.price,
+            vol24h: row.vol24h,
+            time: now,
+          }
+          alerts.unshift(alert)
+          if (alerts.length > 100) alerts.pop()
+          alertsChanged = true
+          this.stats.movements += 1
+
+          emitNotification({
+            type: 'movement',
+            severity: Math.abs(change) >= 8 ? 'critical' : 'success',
+            title: `${row.symbol} ${change > 0 ? '▲' : '▼'} ${Math.abs(change).toFixed(2)}% · ${exName(row.ex)}`,
+            message: `Движение ${win.period} от открытия свечи · цена ${row.price < 0.01 ? row.price.toExponential(2) : row.price.toFixed(4)} · объём 24ч ${fmtUsd(row.vol24h)}`,
+            windowId: win.id,
+            voiceText: voiceTextMovement(row.symbol, change, exName(row.ex)),
+          })
         }
       }
-    } catch {
-      /* офлайн — остаёмся на демо-значении */
+      alertsByWin[win.id] = alerts
     }
+    if (alertsChanged) useLive.setState({ movementAlerts: alertsByWin })
   }
 
-  private step() {
-    try {
-      this.tickCount += 1
-      this.sim.step()
+  // ── Плотности: стены с сервера → окна пользователя ────────────────
 
-      const densityEvents = this.densityTick()
-      const movementAlerts = this.movementTick()
-
-      if (this.tickCount % 2 === 0) this.arbitrageTick()
-      this.newsTick()
-      if (Date.now() >= this.nextFgAt) this.fgTick()
-      if (this.tickCount % 2 === 0) this.connectsTick()
-
-      this.stats.ticks = this.tickCount
-      this.stats.wsClients = Math.max(12, Math.min(48, this.stats.wsClients + (Math.random() - 0.5) * 2))
-
-      useLive.setState({
-        tick: this.tickCount,
-        tickers: Object.fromEntries(this.sim.tickers),
-        densityEvents,
-        movementAlerts,
-        connects: [...this.connects],
-        stats: { ...this.stats },
-      })
-    } catch (e) {
-      this.stats.errors += 1
-      console.error('hub step error', e)
-    }
-  }
-
-  // ── Плотности ───────────────────────────────────────────────────────
-
-  private densityTick(): Record<string, import('./types').DensityEvent[]> {
+  private handleWalls(rows: WallRow[]) {
     const { densityWindows } = useApp.getState()
+    if (densityWindows.length === 0) return
     const now = Date.now()
-    const result: Record<string, import('./types').DensityEvent[]> = {}
+    const de = { ...useLive.getState().densityEvents }
+    let anyNew = false
 
-    for (const win of densityWindows) {
-      const prev = useLive.getState().densityEvents[win.id] ?? []
-      let events = prev.filter((e) => e.expiresAt > now)
-      if (!win.enabled) {
-        result[win.id] = events
-        continue
-      }
+    for (const w of rows) {
+      for (const win of densityWindows) {
+        if (!win.enabled || win.exchange !== w.ex) continue
+        if (win.mode !== 'ALL' && win.mode !== w.m) continue
 
-      const markets: MarketType[] = win.mode === 'ALL' ? ['F', 'S'] : [win.mode]
-      for (const m of markets) {
-        if (Math.random() >= 0.025) continue
-        const settings = m === 'F' ? win.f : win.s
-        const blacklist = m === 'F' ? win.blacklistF : win.blacklistS
-        const candidates = this.sim.coinsOn(win.exchange, m).filter((sym) => {
-          if (blacklist.includes(sym)) return false
-          const t = this.sim.ticker(win.exchange, m, sym)
-          if (!t) return false
-          const ovr = win.tickers[sym]
-          if (ovr && ovr.enabled === false) return false
-          const minVol = ovr?.minVolume24h ?? settings.minVolume24h
-          return t.vol24h >= minVol
-        })
-        if (candidates.length === 0) continue
-        const sym = candidates[Math.floor(Math.random() * candidates.length)]
-        const t = this.sim.ticker(win.exchange, m, sym)!
-        const ovr = win.tickers[sym]
+        const settings = w.m === 'F' ? win.f : win.s
+        const blacklist = w.m === 'F' ? win.blacklistF : win.blacklistS
+        if (blacklist.includes(w.symbol)) continue
+        const ovr = win.tickers[w.symbol]
+        if (ovr && ovr.enabled === false) continue
+        const minVol = ovr?.minVolume24h ?? settings.minVolume24h
+        if (w.vol24h < minVol) continue
         const minOrder = Math.max(settings.minOrderUsd, ovr?.minOrderUsd ?? 0)
-        const side = Math.random() < 0.5 ? 'BID' : 'ASK'
-        const depth = side === 'BID' ? settings.bidDepthPct : settings.askDepthPct
-        const strength = depth * (0.9 + Math.random() * 2.2)
-        const volumeUsd = minOrder * (1 + Math.random() * 22)
+        if (w.notionalUsd < minOrder) continue
+        const depth = w.side === 'BID' ? settings.bidDepthPct : settings.askDepthPct
+        if (w.distPct > depth) continue
+
         const event: DensityEvent = {
-          id: uid('den'),
+          id: `${w.id}_${win.id}`,
           windowId: win.id,
-          exchange: win.exchange,
-          market: m,
-          symbol: sym,
-          side,
-          direction: side === 'BID' ? 'LONG' : 'SHORT',
-          volumeUsd,
-          strengthPct: Math.round(strength * 100) / 100,
-          levelPrice: t.price * (1 + (side === 'BID' ? -strength : strength) / 100),
-          createdAt: now,
+          exchange: w.ex,
+          market: w.m,
+          symbol: w.symbol,
+          side: w.side,
+          direction: w.side === 'BID' ? 'LONG' : 'SHORT',
+          volumeUsd: w.notionalUsd,
+          strengthPct: w.distPct,
+          levelPrice: w.price,
+          createdAt: w.ts,
           expiresAt: now + settings.lifetimeSec * 1000,
           lifetimeSec: settings.lifetimeSec,
         }
-        events = [event, ...events].slice(0, 50)
+        const list = de[win.id] ? [event, ...de[win.id]] : [event]
+        de[win.id] = list.slice(0, 60)
+        anyNew = true
         this.stats.densities += 1
 
-        const severity = volumeUsd >= 20e6 ? 'critical' : volumeUsd >= 8e6 ? 'warning' : 'info'
+        const severity = w.notionalUsd >= 20e6 ? 'critical' : w.notionalUsd >= 8e6 ? 'warning' : 'info'
         emitNotification({
           type: 'density',
           severity,
-          title: `${sym} · ${fmtUsd(volumeUsd)} · ${event.direction}`,
-          message: `Плотность ${side === 'BID' ? 'покупателей' : 'продавцов'} ${strength.toFixed(2)}% от цены · ${exName(win.exchange)} ${m === 'F' ? 'фьючерс' : 'спот'} · истекает через ${settings.lifetimeSec}с`,
+          title: `${w.symbol} · ${fmtUsd(w.notionalUsd)} · ${event.direction}`,
+          message: `Плотность ${w.side === 'BID' ? 'покупателей' : 'продавцов'} на ${w.distPct.toFixed(2)}% от цены · ${exName(w.ex)} ${w.m === 'F' ? 'фьючерс' : 'спот'} · объём 24ч ${fmtUsd(w.vol24h)}`,
           windowId: win.id,
           soundId: settings.soundId,
           volumePct: settings.volumePct,
           voice: settings.voice,
-          voiceText: voiceTextDensity(sym, volumeUsd, side, exName(win.exchange)),
+          voiceText: voiceTextDensity(w.symbol, w.notionalUsd, w.side, exName(w.ex)),
         })
       }
-      result[win.id] = events
     }
-    return result
+    if (anyNew) useLive.setState({ densityEvents: de })
   }
 
-  // ── Движения ────────────────────────────────────────────────────────
+  // ── Арбитраж: спреды с сервера → фильтры пользователя ─────────────
 
-  private movementTick(): Record<string, MovementAlert[]> {
-    const { movementWindows } = useApp.getState()
-    const now = Date.now()
-    const result: Record<string, MovementAlert[]> = {}
-    const prevAll = useLive.getState().movementAlerts
-
-    for (const win of movementWindows) {
-      const alerts = prevAll[win.id] ? [...prevAll[win.id]] : []
-      if (win.enabled) {
-        const marketKeys = Object.entries(win.markets).filter(([, on]) => on).map(([k]) => k)
-        for (const mk of marketKeys) {
-          const [ex, m] = mk.split('_') as [ExchangeId, MarketType]
-          for (const sym of this.sim.coinsOn(ex, m)) {
-            const t = this.sim.ticker(ex, m, sym)
-            if (!t) continue
-            const open = win.period === '1m' ? t.open1m : win.period === '5m' ? t.open5m : t.open24h
-            if (!open) continue
-            const change = ((t.price - open) / open) * 100
-            if (win.direction === 'up' && change <= 0) continue
-            if (win.direction === 'down' && change >= 0) continue
-            const rule = win.coinRules.find((r) => r.symbol === sym)
-            const threshold = rule?.pct ?? win.thresholdPct
-            if (Math.abs(change) < threshold) continue
-            if (t.vol24h < win.minVol24h) continue
-
-            const cdKey = `${win.id}|${ex}|${m}|${sym}`
-            const last = this.movementCooldown.get(cdKey) ?? 0
-            if (now - last < win.cooldownSec * 1000) continue
-            this.movementCooldown.set(cdKey, now)
-
-            const alert: MovementAlert = {
-              id: uid('mv'),
-              windowId: win.id,
-              exchange: ex,
-              market: m,
-              symbol: sym,
-              period: win.period,
-              changePct: Math.round(change * 100) / 100,
-              price: t.price,
-              vol24h: t.vol24h,
-              time: now,
-            }
-            alerts.unshift(alert)
-            if (alerts.length > 100) alerts.pop()
-            this.stats.movements += 1
-
-            emitNotification({
-              type: 'movement',
-              severity: Math.abs(change) >= 8 ? 'critical' : 'success',
-              title: `${sym} ${change > 0 ? '▲' : '▼'} ${Math.abs(change).toFixed(2)}% · ${exName(ex)}`,
-              message: `Движение ${win.period} от открытия свечи · цена ${t.price < 0.01 ? t.price.toExponential(2) : t.price.toFixed(4)} · объём 24ч ${fmtUsd(t.vol24h)}`,
-              windowId: win.id,
-              voiceText: voiceTextMovement(sym, change, exName(ex)),
-            })
-          }
-        }
-      }
-      result[win.id] = alerts
-    }
-    return result
-  }
-
-  // ── Арбитраж ────────────────────────────────────────────────────────
-
-  private arbitrageTick() {
+  private handleSpreads(data: { F: SpreadRow[]; S: SpreadRow[] }) {
     const cfg = useApp.getState().arbitrage
     const now = Date.now()
     const seen = new Set<string>()
+    const active = new Map<string, ArbKeyState>()
 
-    for (const coin of this.sim.coins) {
-      let minP = Infinity
-      let maxP = -Infinity
-      let minEx: ExchangeId | null = null
-      let maxEx: ExchangeId | null = null
-      for (const l of this.sim.listings) {
-        if (l.m !== cfg.mode || l.sym !== coin.symbol) continue
-        if (!cfg.exchanges[l.ex]) continue
-        const t = this.sim.tickers.get(`${l.ex}:${l.m}:${l.sym}`)
-        if (!t) continue
-        if (t.price < minP) { minP = t.price; minEx = l.ex }
-        if (t.price > maxP) { maxP = t.price; maxEx = l.ex }
-      }
-      if (!minEx || !maxEx || minEx === maxEx) continue
-      const vol = this.sim.vol24h.get(coin.symbol) ?? 0
-      if (vol < cfg.minVol24h) continue
-      const spread = ((maxP - minP) / minP) * 100
-      if (spread < cfg.minSpreadPct) continue
-
-      const key = `${coin.symbol}_${minEx}_${maxEx}`
+    for (const r of data[cfg.mode] ?? []) {
+      if (!cfg.exchanges[r.buyEx] || !cfg.exchanges[r.sellEx]) continue
+      if (r.spreadPct < cfg.minSpreadPct || r.vol24h < cfg.minVol24h) continue
+      const key = `${r.symbol}_${r.buyEx}_${r.sellEx}`
       seen.add(key)
       const existing = this.arbActive.get(key)
       if (existing) {
-        existing.spreadPct = spread
-        existing.vol24h = vol
+        existing.spreadPct = r.spreadPct
+        existing.vol24h = r.vol24h
         existing.time = now
+        active.set(key, existing)
       } else {
-        this.arbActive.set(key, { symbol: coin.symbol, buyExchange: minEx, sellExchange: maxEx, spreadPct: spread, vol24h: vol, time: now, lastNotified: 0 })
+        active.set(key, { symbol: r.symbol, buyExchange: r.buyEx, sellExchange: r.sellEx, spreadPct: r.spreadPct, vol24h: r.vol24h, time: now })
         this.stats.arbitrages += 1
       }
 
-      const st = this.arbActive.get(key)!
-      const lastN = this.arbCooldown.get(coin.symbol) ?? 0
-      const notifyThreshold = Math.max(cfg.minSpreadPct * 1.8, 1.0)
-      if (spread >= notifyThreshold && now - lastN > 120_000) {
-        this.arbCooldown.set(coin.symbol, now)
+      const lastN = this.arbCooldown.get(r.symbol) ?? 0
+      if (now - lastN > cfg.cooldownSec * 1000) {
+        this.arbCooldown.set(r.symbol, now)
         emitNotification({
           type: 'arbitrage',
-          severity: spread >= 1.5 ? 'warning' : 'info',
-          title: `${coin.symbol} · спред ${spread.toFixed(2)}%`,
-          message: `Покупка ${exName(minEx)} → продажа ${exName(maxEx)} · объём 24ч ${fmtUsd(vol)}`,
-          voiceText: voiceTextArbitrage(coin.symbol, spread),
+          severity: r.spreadPct >= 1.5 ? 'warning' : 'info',
+          title: `${r.symbol} · спред ${r.spreadPct.toFixed(2)}%`,
+          message: `Покупка ${exName(r.buyEx)} → продажа ${exName(r.sellEx)} · объём 24ч ${fmtUsd(r.vol24h)}`,
+          voiceText: voiceTextArbitrage(r.symbol, r.spreadPct),
         })
       }
     }
 
-    for (const key of [...this.arbActive.keys()]) {
+    for (const [key, st] of [...this.arbActive.entries()]) {
       if (!seen.has(key)) this.arbActive.delete(key)
+      else if (!active.has(key)) active.set(key, st)
     }
+    this.arbActive = active
 
-    const opps = [...this.arbActive.values()]
+    const opps = [...active.values()]
       .sort((a, b) => b.spreadPct - a.spreadPct)
       .slice(0, 40)
       .map((o) => ({
         id: `${o.symbol}_${o.buyExchange}_${o.sellExchange}`,
-        symbol: o.symbol, market: useApp.getState().arbitrage.mode,
-        buyExchange: o.buyExchange, buyPrice: this.sim.ticker(o.buyExchange, useApp.getState().arbitrage.mode, o.symbol)?.price ?? 0,
-        sellExchange: o.sellExchange, sellPrice: this.sim.ticker(o.sellExchange, useApp.getState().arbitrage.mode, o.symbol)?.price ?? 0,
-        spreadPct: o.spreadPct, vol24h: o.vol24h, time: o.time,
+        symbol: o.symbol,
+        market: cfg.mode,
+        buyExchange: o.buyExchange,
+        buyPrice: (data[cfg.mode] ?? []).find((r) => r.symbol === o.symbol && r.buyEx === o.buyExchange)?.buyPrice ?? 0,
+        sellExchange: o.sellExchange,
+        sellPrice: (data[cfg.mode] ?? []).find((r) => r.symbol === o.symbol && r.sellEx === o.sellExchange)?.sellPrice ?? 0,
+        spreadPct: o.spreadPct,
+        vol24h: o.vol24h,
+        time: o.time,
       }))
 
     useLive.setState({ arbitrageOpps: opps })
   }
 
-  // ── Новости ─────────────────────────────────────────────────────────
+  // ── Новости ────────────────────────────────────────────────────────
 
-  private newsTick() {
-    const now = Date.now()
-    if (now < this.nextNewsAt) return
-    this.nextNewsAt = now + 25_000 + Math.random() * 45_000
-    const item = generateNews()
-    const news = [item, ...useLive.getState().news].slice(0, 60)
-    this.stats.news += 1
-    useLive.setState({ news })
+  private handleNews(fresh: NewsItem[]) {
+    if (!Array.isArray(fresh) || fresh.length === 0) return
+    const news = [...fresh].sort((a, b) => b.time - a.time).concat(useLive.getState().news)
+    // дедуп по id
+    const seen = new Set<string>()
+    const unique = news.filter((n) => (seen.has(n.id) ? false : (seen.add(n.id), true))).slice(0, 60)
+    this.stats.news += fresh.length
+    useLive.setState({ news: unique })
 
-    if (item.impact === 'high') {
-      emitNotification({
-        type: 'news',
-        severity: 'warning',
-        title: item.title,
-        message: `${item.category} · ${item.source} · влияет на: ${item.affects.join(', ')}`,
-        voiceText: voiceTextNews(item.title),
-      })
-    }
-  }
-
-  // ── Fear & Greed ────────────────────────────────────────────────────
-
-  private fgTick() {
-    this.nextFgAt = Date.now() + 20_000
-    const live = useLive.getState().fearGreed
-    if (live.source === 'live') {
-      // Живое значение — плавно движемся к нему (обновится при следующем fetch)
-      this.fgValue = this.fgValue * 0.7 + live.value * 0.3
-    } else {
-      this.fgValue = Math.max(8, Math.min(92, this.fgValue + (Math.random() - 0.5) * 6))
-    }
-    this.fgHistory = [...this.fgHistory, this.fgValue].slice(-30)
-    useLive.setState({ fearGreed: { value: Math.round(this.fgValue), history: this.fgHistory, source: live.source } })
-  }
-
-  // ── Коннекты ────────────────────────────────────────────────────────
-
-  private connectsTick() {
-    const now = Date.now()
-    for (const c of this.connects) {
-      c.latencyMs = Math.max(6, c.latencyMs * 0.7 + (9 + Math.random() * 45) * 0.3)
-      c.msgsPerSec = Math.max(20, c.msgsPerSec * 0.7 + (60 + Math.random() * 170) * 0.3)
-      const roll = Math.random()
-      if (c.status === 'online' && roll < 0.01) c.status = 'degraded'
-      else if (c.status === 'degraded' && roll < 0.15) c.status = 'online'
-      c.booksLive = c.status === 'online' ? c.booksTotal : Math.floor(c.booksTotal * (0.3 + Math.random() * 0.4))
-      c.lastMsg = now
+    for (const item of fresh) {
+      if (item.impact === 'high') {
+        emitNotification({
+          type: 'news',
+          severity: 'warning',
+          title: item.title,
+          message: `${item.category} · ${item.source}${item.affects.length > 0 ? ' · влияет на: ' + item.affects.join(', ') : ''}`,
+          voiceText: voiceTextNews(item.title),
+        })
+      }
     }
   }
 }

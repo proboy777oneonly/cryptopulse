@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   Activity, CheckCircle2, Cpu, Database, Gauge, HardDrive, MemoryStick, PlayCircle,
@@ -11,27 +11,6 @@ import { useLive } from '@/stores/live-store'
 import { EX_MAP, fmtUptime } from '@/engines/types'
 import { EmptyState, StatCard, useUptime } from '@/components/ui-bits'
 import { cn } from '@/lib/utils'
-
-interface ServerStats {
-  uptime: number
-  serverTime: string
-  appVersion: string
-  nodeVersion: string
-  platform: string
-  cpuModel: string
-  cpuCores: number
-  cpuLoadPct: number[]
-  loadAvg: number[]
-  eventLoopLagMs: number
-  rss: number
-  heapUsed: number
-  heapTotal: number
-  external: number
-  systemMemTotal: number
-  systemMemFree: number
-  processPid: number
-  env: string
-}
 
 function fmtBytes(v: number): string {
   const a = Math.abs(v)
@@ -50,43 +29,50 @@ interface TestResult {
 export function MonitorView() {
   const connects = useLive((s) => s.connects)
   const stats = useLive((s) => s.stats)
+  const serviceStats = useLive((s) => s.serviceStats)
   const running = useLive((s) => s.running)
+  const dataMode = useLive((s) => s.dataMode)
   const uptime = useUptime()
-  const [srv, setSrv] = useState<ServerStats | null>(null)
-  const [srvError, setSrvError] = useState(false)
   const [tests, setTests] = useState<TestResult[] | null>(null)
   const [testing, setTesting] = useState(false)
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch('/api/server-stats')
-      if (res.ok) {
-        setSrv(await res.json())
-        setSrvError(false)
-      } else setSrvError(true)
-    } catch {
-      setSrvError(true)
-    }
-  }, [])
+  // телеметрия реального market-сервиса (порт 3003)
+  const srv = serviceStats ? {
+    uptime: serviceStats.sys.uptime,
+    serverTime: serviceStats.sys.serverTime,
+    appVersion: serviceStats.sys.appVersion,
+    nodeVersion: serviceStats.sys.nodeVersion,
+    platform: serviceStats.sys.platform,
+    cpuModel: serviceStats.sys.cpuModel,
+    cpuCores: serviceStats.sys.cpuCores,
+    cpuLoadPct: serviceStats.sys.cpuLoadPct,
+    loadAvg: serviceStats.sys.loadAvg,
+    eventLoopLagMs: serviceStats.sys.eventLoopLagMs,
+    rss: serviceStats.sys.rss,
+    heapUsed: serviceStats.sys.heapUsed,
+    heapTotal: serviceStats.sys.heapTotal,
+    external: serviceStats.sys.external,
+    systemMemTotal: serviceStats.sys.systemMemTotal,
+    systemMemFree: serviceStats.sys.systemMemFree,
+    processPid: serviceStats.sys.processPid,
+    env: 'production',
+  } : null
 
-  useEffect(() => {
-    const initial = setTimeout(load, 0)
-    const t = setInterval(load, 2000)
-    return () => {
-      clearTimeout(initial)
-      clearInterval(t)
-    }
-  }, [load])
-
-  const runTests = async () => {
+  const runTests = useCallback(async () => {
     setTesting(true)
     const results: TestResult[] = []
-    // API
+    // Market-сервер
+    results.push({
+      name: 'Market-сервер (реальные данные)',
+      ok: dataMode === 'live',
+      detail: dataMode === 'live' ? `socket подключён · ${serviceStats?.symbols ?? 0} символов` : dataMode === 'reconnecting' ? 'переподключение…' : 'нет соединения',
+    })
+    // API Next.js
     try {
       const r = await fetch('/api/server-stats')
-      results.push({ name: 'API сервера', ok: r.ok, detail: r.ok ? 'Отвечает, 200 OK' : `Код ${r.status}` })
+      results.push({ name: 'API приложения', ok: r.ok, detail: r.ok ? 'Отвечает, 200 OK' : `Код ${r.status}` })
     } catch {
-      results.push({ name: 'API сервера', ok: false, detail: 'Нет ответа' })
+      results.push({ name: 'API приложения', ok: false, detail: 'Нет ответа' })
     }
     // Локальное хранилище
     try {
@@ -116,7 +102,7 @@ export function MonitorView() {
     await new Promise((r) => setTimeout(r, 400))
     setTests(results)
     setTesting(false)
-  }
+  }, [connects, dataMode, running, serviceStats, stats.ticks, stats.errors])
 
   const heapPct = srv ? (srv.heapUsed / srv.heapTotal) * 100 : 0
   const sysUsedPct = srv ? ((srv.systemMemTotal - srv.systemMemFree) / srv.systemMemTotal) * 100 : 0
@@ -126,21 +112,15 @@ export function MonitorView() {
 
   return (
     <div className="space-y-4">
-      {/* Стат-карточки сервера */}
+      {/* Стат-карточки market-сервера */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        <StatCard label="Аптайм сервера" value={srv ? fmtUptime(srv.uptime) : '…'} sub={`сессия: ${uptime}`} icon={<Timer className="h-4 w-4" />} />
-        <StatCard label="Версия" value={srv?.appVersion ?? '…'} sub={`Node ${srv?.nodeVersion ?? ''}`} icon={<Server className="h-4 w-4" />} accent="#8b5cf6" />
+        <StatCard label="Аптайм market-сервера" value={srv ? fmtUptime(srv.uptime) : '…'} sub={`сессия: ${uptime}`} icon={<Timer className="h-4 w-4" />} />
+        <StatCard label="Версия" value={srv?.appVersion ?? '…'} sub={srv?.nodeVersion ?? ''} icon={<Server className="h-4 w-4" />} accent="#8b5cf6" />
         <StatCard label="Цикл событий" value={srv ? `${srv.eventLoopLagMs.toFixed(2)} мс` : '…'} sub="задержка event loop" icon={<Activity className="h-4 w-4" />} accent={srv && srv.eventLoopLagMs > 50 ? '#f43f5e' : '#10b981'} />
-        <StatCard label="WS клиенты" value={Math.round(stats.wsClients)} sub="активных подключений" icon={<Wifi className="h-4 w-4" />} accent="#22d3ee" />
+        <StatCard label="WS клиенты" value={serviceStats ? serviceStats.wsClients : '…'} sub="активных подключений" icon={<Wifi className="h-4 w-4" />} accent="#22d3ee" />
         <StatCard label="Книги (live/total)" value={`${booksLive}/${booksTotal}`} sub={`задержка ~${avgLatency.toFixed(0)} мс`} icon={<Database className="h-4 w-4" />} accent="#f59e0b" />
-        <StatCard label="Платформа" value={srv ? `${srv.cpuCores} ядер` : '…'} sub={srv?.platform ?? ''} icon={<Cpu className="h-4 w-4" />} accent="#f472b6" />
+        <StatCard label="Символов в потоке" value={serviceStats ? serviceStats.symbols.toLocaleString('ru-RU') : '…'} sub={srv ? `${srv.cpuCores} ядер · ${srv.platform}` : ''} icon={<Cpu className="h-4 w-4" />} accent="#f472b6" />
       </div>
-
-      {srvError && (
-        <div className="rounded-xl border border-[color-mix(in_srgb,var(--destructive)_40%,transparent)] bg-[color-mix(in_srgb,var(--destructive)_8%,transparent)] px-4 py-3 text-xs font-semibold text-[var(--destructive)]">
-          Не удалось получить телеметрию сервера — проверьте права администратора и соединение.
-        </div>
-      )}
 
       <div className="grid gap-4 xl:grid-cols-3">
         {/* CPU по ядрам */}
@@ -211,11 +191,12 @@ export function MonitorView() {
           </h3>
           <div className="mt-3 space-y-2">
             {[
-              { name: 'Рынок (8 бирж, F+S)', count: stats.ticks, unit: 'тиков', color: '#8b5cf6' },
+              { name: 'Реальный поток (8 бирж, F+S)', count: stats.ticks, unit: 'тиков', color: '#8b5cf6' },
               { name: 'Плотности', count: stats.densities, unit: 'событий', color: '#f59e0b' },
               { name: 'Движения', count: stats.movements, unit: 'алертов', color: '#10b981' },
               { name: 'Арбитраж', count: stats.arbitrages, unit: 'сигналов', color: '#22d3ee' },
               { name: 'Новости', count: stats.news, unit: 'публикаций', color: '#f472b6' },
+              ...(serviceStats ? [{ name: 'Стен найдено сервисом', count: serviceStats.walls, unit: 'шт', color: '#a78bfa' }] : []),
             ].map((e) => (
               <div key={e.name} className="flex items-center gap-2.5 rounded-xl border border-[var(--border)] px-3 py-2">
                 <span className="h-2 w-2 rounded-full cp-pulse-dot" style={{ background: e.color }} />

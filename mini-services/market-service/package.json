@@ -1,0 +1,11 @@
+{
+  "name": "cryptopulse-market-service",
+  "version": "3.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot index.ts"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.1"
+  }
+}
