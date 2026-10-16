@@ -6,9 +6,9 @@
 // рынок F/S и список монет с автоварьировкой топ-объёма 24ч.
 // ════════════════════════════════════════════════════════════════════
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
-  ChevronDown, MousePointer2, MoveHorizontal, MoveVertical, RotateCcw,
+  MousePointer2, MoveHorizontal, MoveVertical, RotateCcw,
   Ruler, Search, Sigma, Slash, Square, Trash2,
 } from 'lucide-react'
 import { useApp } from '@/stores/app-store'
@@ -17,7 +17,7 @@ import { getHub } from '@/engines/hub'
 import { fmtUsd, type SymbolRow, type TickerSnapshot } from '@/engines/types'
 import { TickerCopy, splitQuote } from '@/components/ui-bits'
 import { cn } from '@/lib/utils'
-import { CandleChart, fmtChartPrice, type Candle, type ChartTool } from './chart-canvas'
+import { CandleChart, type Candle, type ChartTool } from './chart-canvas'
 
 type Ex3 = 'BINANCE' | 'BYBIT' | 'OKX'
 type Mkt = 'F' | 'S'
@@ -58,106 +58,6 @@ async function fetchRetry(url: string, tries = 3, delayMs = 3000): Promise<Respo
     await new Promise((res) => setTimeout(res, delayMs))
   }
   throw new Error('fetch failed')
-}
-
-function ChangeChip({ label, v }: { label: string; v?: number }) {
-  if (v === undefined || !Number.isFinite(v)) return null
-  const up = v >= 0
-  return (
-    <span
-      className="cp-num flex h-8 shrink-0 items-center gap-1 rounded-lg border px-2 text-[11px] font-bold"
-      style={{
-        color: up ? 'var(--pos)' : 'var(--neg)',
-        borderColor: up ? 'color-mix(in srgb, var(--pos) 30%, transparent)' : 'color-mix(in srgb, var(--neg) 30%, transparent)',
-        background: up ? 'color-mix(in srgb, var(--pos) 8%, transparent)' : 'color-mix(in srgb, var(--neg) 8%, transparent)',
-      }}
-    >
-      <span className="text-[9px] font-semibold opacity-70">{label}</span>
-      {up ? '+' : ''}{v.toFixed(2)}%
-    </span>
-  )
-}
-
-// ─── Выбор тикера ──────────────────────────────────────────────────────
-
-function SymbolPicker({ rows, value, onSelect }: { rows: SymbolRow[]; value: string; onSelect: (s: string) => void }) {
-  const [open, setOpen] = useState(false)
-  const [q, setQ] = useState('')
-  const list = useMemo(() => {
-    const qq = q.trim().toUpperCase()
-    return (qq === '' ? rows : rows.filter((r) => r.symbol.includes(qq))).slice(0, 150)
-  }, [rows, q])
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  return (
-    <div className="relative">
-      <button
-        onClick={() => {
-          if (!open) {
-            setQ('')
-            setTimeout(() => inputRef.current?.focus(), 30)
-          }
-          setOpen((v) => !v)
-        }}
-        className="cp-num flex h-11 items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 text-[15px] font-black tracking-tight transition-all hover:border-[color-mix(in_srgb,var(--acc)_45%,transparent)]"
-        aria-expanded={open}
-      >
-        {value || '—'}
-        <ChevronDown className={cn('h-4 w-4 text-[var(--muted-foreground)] transition-transform', open && 'rotate-180')} />
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div
-            className="absolute left-0 top-[52px] z-50 w-[340px] max-w-[92vw] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card-solid)]"
-            style={{ boxShadow: '0 24px 60px -20px var(--glow)' }}
-          >
-            <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2.5">
-              <Search className="h-4 w-4 text-[var(--muted-foreground)]" />
-              <input
-                ref={inputRef}
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Поиск тикера…"
-                className="cp-num h-7 w-full bg-transparent text-sm font-semibold outline-none placeholder:text-[var(--muted-foreground)]"
-              />
-            </div>
-            <div className="max-h-[340px] overflow-y-auto p-1.5">
-              {list.length === 0 && (
-                <div className="py-8 text-center text-xs text-[var(--muted-foreground)]">Ничего не найдено</div>
-              )}
-              {list.map((r) => {
-                const { base, quote } = splitQuote(r.symbol)
-                const active = r.symbol === value
-                return (
-                  <button
-                    key={r.symbol}
-                    onClick={() => { onSelect(r.symbol); setOpen(false) }}
-                    className={cn(
-                      'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors',
-                      active ? 'bg-[color-mix(in_srgb,var(--acc)_12%,transparent)]' : 'hover:bg-[var(--muted)]',
-                    )}
-                  >
-                    <span className="cp-num min-w-0 flex-1 truncate text-[13px] font-bold">
-                      {base}
-                      {quote && <span className="text-[10px] font-semibold text-[var(--muted-foreground)] opacity-70"> {quote}</span>}
-                    </span>
-                    <span
-                      className="cp-num w-[62px] shrink-0 text-right text-[11px] font-bold"
-                      style={{ color: r.change24hPct >= 0 ? 'var(--pos)' : 'var(--neg)' }}
-                    >
-                      {r.change24hPct >= 0 ? '+' : ''}{r.change24hPct.toFixed(2)}%
-                    </span>
-                    <span className="cp-num w-[56px] shrink-0 text-right text-[10px] text-[var(--muted-foreground)]">{fmtUsd(r.vol24h)}</span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  )
 }
 
 // ─── Правая колонка: биржа · рынок · список монет ──────────────────────
@@ -369,15 +269,10 @@ export function MarketView() {
     return () => clearTimeout(t)
   }, [interval, reload])
 
-  // ── Живая цена выбранного тикера ──────────────────────────────────
+  // ── Живая цена выбранного тикера (для легенды графика) ───────────
   const live = tickers[`${ex}:${m}:${symbol}`]
-  const lastC = candles.length > 0 ? candles[candles.length - 1] : null
-  const price = live?.price ?? lastC?.c ?? 0
   const row = symbols.find((r) => r.symbol === symbol)
   const chg24 = live?.change24hPct ?? row?.change24hPct
-  const chg1 = live?.change1mPct
-  const chg5 = live?.change5mPct
-  const vol = live?.vol24h ?? row?.vol24h
 
   const selectSymbol = (s: string) => {
     marketSel.set(selKey, s)
@@ -389,38 +284,12 @@ export function MarketView() {
   const ivLabel = INTERVALS.find((iv) => iv.id === interval)?.label ?? interval
 
   return (
-    <div className="flex h-[calc(100dvh-113px)] min-h-[560px] flex-col gap-3">
-      {/* ── Верхняя панель: тикер · цена ───────────────────────────── */}
-      <div className="cp-border-glow flex flex-wrap items-center gap-2 rounded-2xl bg-card px-3 py-2.5">
-        <SymbolPicker rows={symbols} value={symbol} onSelect={selectSymbol} />
-        {/* цена */}
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="cp-num text-xl font-black tracking-tight" style={{ color: chg24 === undefined ? 'var(--foreground)' : chg24 >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-            {price > 0 ? fmtChartPrice(price) : '…'}
-          </span>
-          <ChangeChip label="1м" v={chg1} />
-          <ChangeChip label="5м" v={chg5} />
-          <ChangeChip label="24ч" v={chg24} />
-          {vol !== undefined && (
-            <span className="cp-num hidden h-8 items-center rounded-lg border border-[var(--border)] bg-[var(--muted)] px-2 text-[11px] font-bold text-[var(--muted-foreground)] sm:flex">
-              объём {fmtUsd(vol)}
-            </span>
-          )}
-        </div>
-        {/* живой бейдж */}
-        <span className="ml-auto flex items-center gap-1.5 text-[10px] font-bold text-[var(--muted-foreground)]">
-          <span className="cp-pulse-dot h-1.5 w-1.5 rounded-full" style={{ background: live ? 'var(--pos)' : '#f59e0b' }} />
-          {live ? 'LIVE' : 'по свечам'}
-        </span>
-      </div>
-
-      {/* ── Основная область ────────────────────────────────────────── */}
-      <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
-        {/* график: таймфреймы сверху по центру, рисовалки слева */}
-        <div
-          className="cp-border-glow relative min-h-[340px] min-w-0 flex-1 overflow-hidden rounded-2xl bg-[var(--card-solid)]"
-          style={{ borderTop: `2px solid ${exMeta.color}55` }}
-        >
+    <div className="flex h-[calc(100dvh-113px)] min-h-[560px] gap-3">
+      {/* график: таймфреймы сверху по центру, рисовалки слева */}
+      <div
+        className="cp-border-glow relative min-h-[340px] min-w-0 flex-1 overflow-hidden rounded-2xl bg-[var(--card-solid)]"
+        style={{ borderTop: `2px solid ${exMeta.color}55` }}
+      >
           {/* таймфреймы — верхняя линия, по центру */}
           <div className="absolute left-1/2 top-2 z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-xl border border-[var(--border)] bg-[var(--card-solid)] p-0.5 shadow-lg">
             {INTERVALS.map((iv) => (
@@ -485,6 +354,7 @@ export function MarketView() {
             tool={tool}
             onToolDone={() => setTool('cursor')}
             livePrice={live?.price}
+            chg24={chg24}
             theme={theme}
             clearTick={clearTick}
             label={`${exMeta.name.toUpperCase()} · ${m} · ${base}${quote ? `/${quote}` : ''} · ${ivLabel}`}
@@ -506,7 +376,6 @@ export function MarketView() {
             onM={setM}
           />
         </div>
-      </div>
     </div>
   )
 }

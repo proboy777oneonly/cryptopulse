@@ -3,8 +3,8 @@
 // ════════════════════════════════════════════════════════════════════
 // Canvas-график свечей: зум колесом, панорама драгом во всех направлениях,
 // кроссхэйр, рисовалки (тренд/гориз/верт/прямоугольник/фибо),
-// линейка на колёсико (живёт, пока колёсико зажато) и в тулбаре,
-// магнит с привязкой к OHLC на Ctrl.
+// линейка на колёсико (живёт, пока колёсико зажато; большой шрифт %),
+// магнит с привязкой к OHLC на Ctrl, hi/lo-метки диапазона, вотермарк.
 // Рисунки хранятся в localStorage по ключу графика.
 // ════════════════════════════════════════════════════════════════════
 
@@ -146,6 +146,8 @@ export interface CandleChartProps {
   tool?: ChartTool
   onToolDone?: () => void
   livePrice?: number
+  /** изменение 24ч — в легенду канваса */
+  chg24?: number
   /** тема — триггер перерисовки при смене палитры */
   theme?: string
   className?: string
@@ -161,13 +163,13 @@ export interface CandleChartProps {
 }
 
 export function CandleChart({
-  candles, interval, chartKey, tool = 'cursor', onToolDone, livePrice,
+  candles, interval, chartKey, tool = 'cursor', onToolDone, livePrice, chg24,
   theme, className, showVolume = true, interactive = true, clearTick,
   label, padLeft = 6,
 }: CandleChartProps) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const viewRef = useRef<ViewBox>({ bars: 130, offset: 0, pRange: null })
+  const viewRef = useRef<ViewBox>({ bars: 130, offset: -6, pRange: null })
   const magnetRef = useRef(false)
   const mouseRef = useRef<MouseState>({ x: 0, y: 0, inside: false, mode: 'idle', startX: 0, startY: 0, startOffset: 0 })
   const drawingsRef = useRef<ChartDrawing[]>([])
@@ -332,55 +334,116 @@ export function CandleChart({
       ctx.moveTo(padL, Math.round(y) + 0.5)
       ctx.lineTo(padL + plotW, Math.round(y) + 0.5)
       ctx.stroke()
-      ctx.fillText(fmtChartPrice(p), padL + plotW + 6, y)
+      const ap = fmtChartPrice(p)
+      if (ctx.measureText(ap).width <= padR - 4) ctx.fillText(ap, padL + plotW + 6, y)
     }
 
-    // шкала времени
+    // шкала времени (смена дня/месяца — яркая метка с датой)
     const labelEvery = Math.max(1, Math.ceil(92 / barW))
     ctx.textAlign = 'center'
     for (let i = i0; i <= i1; i++) {
       if (i % labelEvery !== 0) continue
       const x = xOfIdx(i)
-      ctx.strokeStyle = C.grid
+      const d = new Date(cs[i].t)
+      const prev = i > 0 ? new Date(cs[i - 1].t) : null
+      const longTf = interval === '1d' || interval === '1w'
+      const boundary = prev
+        ? (longTf ? prev.getMonth() !== d.getMonth() : prev.getDate() !== d.getDate())
+        : false
+      ctx.strokeStyle = boundary ? `${C.muted}44` : C.grid
+      ctx.lineWidth = 1
       ctx.beginPath()
       ctx.moveTo(Math.round(x) + 0.5, padT)
       ctx.lineTo(Math.round(x) + 0.5, padT + fullH)
       ctx.stroke()
-      ctx.fillStyle = C.muted
-      ctx.fillText(fmtAxisTime(cs[i].t, interval), x, padT + fullH + 11)
+      ctx.fillStyle = boundary ? C.fg : C.muted
+      ctx.font = boundary
+        ? 'bold 10px ui-monospace, Menlo, monospace'
+        : '10px ui-monospace, Menlo, monospace'
+      ctx.fillText(
+        boundary
+          ? d.toLocaleDateString('ru-RU', longTf ? { month: 'short', year: '2-digit' } : { day: '2-digit', month: 'short' })
+          : fmtAxisTime(cs[i].t, interval),
+        x, padT + fullH + 11,
+      )
     }
 
-    // объёмы
+    // водяной знак тикера по центру
+    if (label && plotW > 300) {
+      const wm = label.split(' · ')[2] ?? label
+      ctx.save()
+      ctx.globalAlpha = 0.055
+      ctx.font = `bold ${Math.round(clamp(plotW / 9, 28, 64))}px ui-monospace, Menlo, monospace`
+      ctx.fillStyle = C.fg
+      ctx.textAlign = 'center'
+      ctx.fillText(wm, padL + plotW / 2, padT + chartH / 2 + 12)
+      ctx.restore()
+    }
+
+    // объёмы — с вертикальным градиентом
     if (showVolume && maxV > 0) {
       const volTop = padT + chartH + 8
+      const gUp = ctx.createLinearGradient(0, volTop, 0, volTop + volH)
+      gUp.addColorStop(0, `${C.pos}59`)
+      gUp.addColorStop(1, `${C.pos}12`)
+      const gDn = ctx.createLinearGradient(0, volTop, 0, volTop + volH)
+      gDn.addColorStop(0, `${C.neg}59`)
+      gDn.addColorStop(1, `${C.neg}12`)
       for (let i = i0; i <= i1; i++) {
         const cd = cs[i]
         const x = xOfIdx(i)
         const vh = (cd.v / maxV) * volH
-        ctx.fillStyle = cd.c >= cd.o ? `${C.pos}33` : `${C.neg}33`
-        ctx.fillRect(x - barW * 0.33, volTop + volH - vh, Math.max(1, barW * 0.66), vh)
+        ctx.fillStyle = cd.c >= cd.o ? gUp : gDn
+        ctx.fillRect(Math.round(x - barW * 0.33), volTop + volH - vh, Math.max(1, Math.round(barW * 0.66)), vh)
       }
     }
 
-    // свечи
-    const bodyW = Math.max(1, barW * 0.66)
+    // свечи — хвост в пиксельной сетке, тело с капом ширины
+    const bodyW = clamp(barW * 0.66, 1, 21)
     for (let i = i0; i <= i1; i++) {
       const cd = cs[i]
       const x = xOfIdx(i)
       const up = cd.c >= cd.o
       const col = up ? C.pos : C.neg
+      const wx = Math.round(x) + 0.5
       ctx.strokeStyle = col
       ctx.lineWidth = 1
       ctx.beginPath()
-      ctx.moveTo(Math.round(x) + 0.5, yOfP(cd.h))
-      ctx.lineTo(Math.round(x) + 0.5, yOfP(cd.l))
+      ctx.moveTo(wx, yOfP(cd.h))
+      ctx.lineTo(wx, yOfP(cd.l))
       ctx.stroke()
       const yO = yOfP(cd.o)
       const yC = yOfP(cd.c)
       const top = Math.min(yO, yC)
       const bh = Math.max(1, Math.abs(yC - yO))
       ctx.fillStyle = col
-      ctx.fillRect(x - bodyW / 2, top, bodyW, bh)
+      ctx.fillRect(Math.round(x - bodyW / 2), Math.round(top), Math.round(bodyW), Math.max(1, Math.round(bh)))
+    }
+
+    // метки hi/lo видимого диапазона
+    if (i1 > i0 + 2) {
+      let hiI = i0
+      let loI = i0
+      for (let i = i0 + 1; i <= i1; i++) {
+        if (cs[i].h > cs[hiI].h) hiI = i
+        if (cs[i].l < cs[loI].l) loI = i
+      }
+      const mark = (idx: number, p: number, above: boolean) => {
+        const x = xOfIdx(idx)
+        const y = yOfP(p)
+        ctx.font = 'bold 9px ui-monospace, Menlo, monospace'
+        const txt = fmtChartPrice(p)
+        const w = ctx.measureText(txt).width + 10
+        const yy = above ? y - 19 : y + 5
+        roundRect(ctx, clamp(x - w / 2, padL, padL + plotW - w), yy, w, 14, 3)
+        ctx.fillStyle = `${C.muted}e6`
+        ctx.fill()
+        ctx.fillStyle = C.fg
+        ctx.textAlign = 'center'
+        ctx.fillText(txt, clamp(x, padL + w / 2, padL + plotW - w / 2), yy + 7)
+      }
+      mark(hiI, cs[hiI].h, true)
+      mark(loI, cs[loI].l, false)
     }
 
     // последняя цена (при ручной панораме чип прилипает к краю области)
@@ -409,20 +472,48 @@ export function CandleChart({
     ctx.fillStyle = '#0b0e17'
     ctx.textAlign = 'left'
     ctx.fillText(lpTxt, padL + plotW + 7, yLast)
+    // точка живой цены на последней свече
+    const dotX = xOfIdx(len - 1)
+    if (dotX >= padL && dotX <= padL + plotW && yLastRaw >= padT && yLastRaw <= padT + chartH) {
+      ctx.fillStyle = lastUp ? C.pos : C.neg
+      ctx.beginPath()
+      ctx.arc(dotX, yLastRaw, 3.5, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = C.bg
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.arc(dotX, yLastRaw, 3.5, 0, Math.PI * 2)
+      ctx.stroke()
+    }
 
-    // легенда: подпись графика (биржа · рынок · тикер · ТФ) + OHLC
+    // легенда: биржа · рынок · тикер · ТФ + живая цена + 24ч
     const ms = mouseRef.current
     if (plotW >= 420) {
       ctx.textAlign = 'left'
+      let lx2 = padL + 4
       if (label) {
-        ctx.font = 'bold 10px ui-monospace, Menlo, monospace'
+        ctx.font = 'bold 11px ui-monospace, Menlo, monospace'
         let txt = label
-        const maxLabelW = Math.max(140, plotW / 2 - 150)
+        const maxLabelW = Math.max(120, plotW / 2 - 190)
         while (ctx.measureText(txt).width > maxLabelW && txt.includes(' · ')) {
           txt = txt.split(' · ').slice(1).join(' · ')
         }
         ctx.fillStyle = C.fg
-        ctx.fillText(txt, padL + 4, padT + 10)
+        ctx.fillText(txt, lx2, padT + 10)
+        lx2 += ctx.measureText(txt).width + 14
+      }
+      const legendP = livePrice && livePrice > 0 ? livePrice : cs[len - 1].c
+      if (legendP > 0) {
+        const pc = chg24 === undefined || !Number.isFinite(chg24) ? C.fg : chg24 >= 0 ? C.pos : C.neg
+        ctx.font = 'bold 13px ui-monospace, Menlo, monospace'
+        ctx.fillStyle = pc
+        const pTxt = fmtChartPrice(legendP)
+        ctx.fillText(pTxt, lx2, padT + 10)
+        lx2 += ctx.measureText(pTxt).width + 10
+        if (chg24 !== undefined && Number.isFinite(chg24)) {
+          ctx.font = 'bold 10px ui-monospace, Menlo, monospace'
+          ctx.fillText(`${chg24 >= 0 ? '+' : ''}${chg24.toFixed(2)}% 24ч`, lx2, padT + 10)
+        }
       }
       const hovIdx = ms.inside ? clamp(Math.round(startIdx + (ms.x - padL) / barW - 0.5), 0, len - 1) : len - 1
       const hcd = cs[hovIdx]
@@ -443,11 +534,21 @@ export function CandleChart({
       }
     }
 
-    // магнит (Ctrl): индикатор + привязка курсора к OHLC
+    // магнит (Ctrl): направляющие к свече + кольцо привязки
     if (magnetRef.current && ms.inside) {
       const sn = snapPoint(tOfX(ms.x), pOfY(ms.y))
       const sx = xOfT(sn.t)
       const sy = yOfP(sn.p)
+      ctx.setLineDash([2, 4])
+      ctx.strokeStyle = `${C.acc}55`
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(Math.round(sx) + 0.5, padT)
+      ctx.lineTo(Math.round(sx) + 0.5, padT + fullH)
+      ctx.moveTo(padL, Math.round(sy) + 0.5)
+      ctx.lineTo(padL + plotW, Math.round(sy) + 0.5)
+      ctx.stroke()
+      ctx.setLineDash([])
       ctx.strokeStyle = C.acc
       ctx.lineWidth = 1.5
       ctx.beginPath()
@@ -493,15 +594,17 @@ export function CandleChart({
         ctx.moveTo(padL, y)
         ctx.lineTo(padL + plotW, y)
         ctx.stroke()
-        // чип цены справа
+        // чип цены справа (не наезжает на чип последней цены)
         ctx.fillStyle = col
         ctx.font = 'bold 9px ui-monospace, Menlo, monospace'
         const txt = fmtChartPrice(d.points[0].p)
         const tw = ctx.measureText(txt).width + 8
-        roundRect(ctx, padL + plotW + 2, y - 7, Math.min(tw, padR - 4), 14, 3)
+        let chipY = y
+        if (Math.abs(chipY - yLast) < 16) chipY = yLast + (y <= yLast ? -16 : 16)
+        roundRect(ctx, padL + plotW + 2, chipY - 7, Math.min(tw, padR - 4), 14, 3)
         ctx.fill()
         ctx.fillStyle = '#0b0e17'
-        ctx.fillText(txt, padL + plotW + 6, y)
+        ctx.fillText(txt, padL + plotW + 6, chipY)
       } else if (d.type === 'vline' && pts.length >= 1) {
         const x = pts[0].x
         ctx.setLineDash([2, 3])
@@ -595,30 +698,54 @@ export function CandleChart({
       ctx.strokeStyle = col
       ctx.lineWidth = 1.5
       ctx.strokeRect(rx, ry, rw, rh)
-      // подпись
+      // диагональ между точками
+      ctx.setLineDash([5, 4])
+      ctx.lineWidth = 1.25
+      ctx.beginPath()
+      ctx.moveTo(x1, y1)
+      ctx.lineTo(x2, y2)
+      ctx.stroke()
+      ctx.setLineDash([])
+      // якорные точки
+      ctx.fillStyle = col
+      for (const [ax, ay] of [[x1, y1], [x2, y2]] as const) {
+        ctx.beginPath()
+        ctx.arc(ax, ay, 3, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      // подпись: большой % + Δцены + бары
       const dP = rulerLive.p2 - rulerLive.p1
       const dPct = rulerLive.p1 > 0 ? (dP / rulerLive.p1) * 100 : 0
       const bars = Math.abs(Math.round((rulerLive.t2 - rulerLive.t1) / intervalMs))
-      const lines = [
-        `${dP >= 0 ? '+' : ''}${fmtChartPrice(dP)}  (${dPct >= 0 ? '+' : ''}${dPct.toFixed(2)}%)`,
-        `${bars} бар(ов) · ${fmtDuration(Math.abs(rulerLive.t2 - rulerLive.t1))}`,
-      ]
-      ctx.font = 'bold 10px ui-monospace, Menlo, monospace'
-      const bw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 14
-      const bx = clamp(x2 + 10, padL, padL + plotW - bw - 4)
-      const by = clamp(y2 - 40, padT + 4, padT + fullH - 40)
+      const bigPct = `${dPct >= 0 ? '+' : ''}${dPct.toFixed(2)}%`
+      const line2 = `${dP >= 0 ? '+' : ''}${fmtChartPrice(dP)}`
+      const line3 = `${bars} бар. · ${fmtDuration(Math.abs(rulerLive.t2 - rulerLive.t1))}`
+      ctx.font = 'bold 21px ui-monospace, Menlo, monospace'
+      const w1 = ctx.measureText(bigPct).width
+      ctx.font = 'bold 11px ui-monospace, Menlo, monospace'
+      const w2 = ctx.measureText(line2).width
+      ctx.font = '10px ui-monospace, Menlo, monospace'
+      const w3 = ctx.measureText(line3).width
+      const bw = Math.max(w1, w2, w3) + 20
+      const bh = 60
+      const bx = clamp(x2 + 12, padL, padL + plotW - bw - 4)
+      const by = clamp(y2 - bh - 10, padT + 4, padT + fullH - bh)
       ctx.fillStyle = C.card
-      roundRect(ctx, bx, by, bw, 36, 6)
+      roundRect(ctx, bx, by, bw, bh, 8)
       ctx.fill()
       ctx.strokeStyle = col
       ctx.lineWidth = 1
-      roundRect(ctx, bx, by, bw, 36, 6)
+      roundRect(ctx, bx, by, bw, bh, 8)
       ctx.stroke()
+      ctx.textAlign = 'center'
+      ctx.font = 'bold 21px ui-monospace, Menlo, monospace'
       ctx.fillStyle = col
-      ctx.textAlign = 'left'
-      ctx.fillText(lines[0], bx + 7, by + 11)
+      ctx.fillText(bigPct, bx + bw / 2, by + 21)
+      ctx.font = 'bold 11px ui-monospace, Menlo, monospace'
+      ctx.fillText(line2, bx + bw / 2, by + 38)
+      ctx.font = '10px ui-monospace, Menlo, monospace'
       ctx.fillStyle = C.muted
-      ctx.fillText(lines[1], bx + 7, by + 25)
+      ctx.fillText(line3, bx + bw / 2, by + 52)
     }
 
     // ── Кроссхэйр ──────────────────────────────────────────────────
@@ -633,27 +760,27 @@ export function CandleChart({
       ctx.lineTo(padL + plotW, Math.round(ms.y) + 0.5)
       ctx.stroke()
       ctx.setLineDash([])
-      // чип цены
+      // чип цены (акцент)
       const cpTxt = fmtChartPrice(pOfY(ms.y))
       ctx.font = 'bold 10px ui-monospace, Menlo, monospace'
       const cw = ctx.measureText(cpTxt).width + 10
-      ctx.fillStyle = C.muted
+      ctx.fillStyle = C.acc
       roundRect(ctx, padL + plotW + 2, ms.y - 8, Math.min(cw, padR - 4), 16, 4)
       ctx.fill()
       ctx.fillStyle = '#0b0e17'
       ctx.textAlign = 'left'
       ctx.fillText(cpTxt, padL + plotW + 7, ms.y)
-      // чип времени
+      // чип времени (акцент)
       const ctTxt = fmtAxisTime(tOfX(ms.x), interval)
       const tw2 = ctx.measureText(ctTxt).width + 10
-      ctx.fillStyle = C.muted
+      ctx.fillStyle = C.acc
       roundRect(ctx, clamp(ms.x - tw2 / 2, padL, padL + plotW - tw2), padT + fullH + 2, tw2, 15, 4)
       ctx.fill()
       ctx.fillStyle = '#0b0e17'
       ctx.textAlign = 'center'
       ctx.fillText(ctTxt, clamp(ms.x, padL + tw2 / 2, padL + plotW - tw2 / 2), padT + fullH + 10)
     }
-  }, [computeScale, interval, label, livePrice, readColors, showVolume, snapPoint])
+  }, [chg24, computeScale, interval, label, livePrice, readColors, showVolume, snapPoint])
 
   // ── Хит-тест рисунка под курсором ─────────────────────────────────
   const hitTest = useCallback((x: number, y: number): string | null => {
@@ -701,7 +828,7 @@ export function CandleChart({
     } else {
       drawingsRef.current = []
     }
-    viewRef.current = { bars: 130, offset: 0, pRange: null }
+    viewRef.current = { bars: 130, offset: -6, pRange: null }
     redrawRef.current()
   }, [chartKey])
 
@@ -981,7 +1108,7 @@ export function CandleChart({
   }, [onWheelNative])
 
   const onDoubleClick = () => {
-    viewRef.current = { bars: 130, offset: 0, pRange: null }
+    viewRef.current = { bars: 130, offset: -6, pRange: null }
     redraw()
   }
 

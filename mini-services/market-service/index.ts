@@ -16,6 +16,15 @@ import { type ConnectRow, type MoverRow, type NewsItem, type ServiceStats, type 
 
 const PORT = 3003
 
+// ─── Живучесть: сервис должен работать неделями без присмотра ───────
+// Случайная непойманная ошибка не должна ронять весь процесс — логируем и живём дальше.
+process.on('uncaughtException', (e) => {
+  console.error('[GUARD] uncaughtException:', e)
+})
+process.on('unhandledRejection', (e) => {
+  console.error('[GUARD] unhandledRejection:', e)
+})
+
 const httpServer = createServer()
 const io = new Server(httpServer, {
   // путь не менять — Caddy использует его для форварда
@@ -169,7 +178,7 @@ io.on('connection', (socket) => {
   console.log(`[WS+] client ${socket.id}, total ${io.engine.clientsCount}`)
 
   socket.emit('hello', {
-    service: { version: '3.4.0', startedAt: state.startedAt },
+    service: { version: '3.5.0', startedAt: state.startedAt },
     fg: state.fg,
     news: newsEngine.items,
     listings: listingsEngine.items.map(toClientListing),
@@ -198,8 +207,8 @@ io.on('connection', (socket) => {
 
 async function main() {
   console.log('════════════════════════════════════════════════')
-  console.log('  CryptoPulse Market Service v3.4.0')
-  console.log(`  port ${PORT} · 8 exchanges · F+S · real data · arb 4 modes`)
+  console.log('  CryptoPulse Market Service v3.5.0')
+  console.log(`  port ${PORT} · 8 exchanges · F+S · real data · arb 4 modes · hardened`)
   console.log('════════════════════════════════════════════════')
 
   tickerHub.start()
@@ -215,9 +224,22 @@ async function main() {
     console.log(`[OK] socket.io listening on :${PORT}`)
   })
 
-  // самопроверка раз в минуту
+  // самопроверка раз в минуту + зомби-детект:
+  // если после прогрева (20 мин) нет ни одного символа 15 минут подряд —
+  // выходим с кодом 1, watchdog поднимет сервис заново (чистое состояние)
+  let emptyTicks = 0
   setInterval(() => {
-    console.log(`[health] symbols=${tickerHub.symbolsCount()} movers=${state.movers} walls=${state.walls} news=${newsEngine.items.length} clients=${io.engine.clientsCount} errs=${state.errors}`)
+    const symbols = tickerHub.symbolsCount()
+    console.log(`[health] symbols=${symbols} movers=${state.movers} walls=${state.walls} news=${newsEngine.items.length} clients=${io.engine.clientsCount} errs=${state.errors}`)
+    if (symbols === 0 && Date.now() - state.startedAt > 20 * 60_000) {
+      emptyTicks += 1
+      if (emptyTicks >= 15) {
+        console.error('[GUARD] нет символов 15 минут — выходим для перезапуска')
+        process.exit(1)
+      }
+    } else {
+      emptyTicks = 0
+    }
   }, 60_000)
 }
 

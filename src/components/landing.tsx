@@ -126,7 +126,7 @@ export function Landing({ onLogin, onRegister, onDemo, demoLoading }: {
               {[
                 { v: '8', l: 'бирж' },
                 { v: '2×', l: 'F + S рынки' },
-                { v: '70+', l: 'монет' },
+                { v: '400+', l: 'монет' },
                 { v: '<1с', l: 'отклик' },
               ].map((s) => (
                 <div key={s.l} className="cp-border-glow rounded-xl bg-card p-3 text-center">
@@ -382,7 +382,7 @@ export function Landing({ onLogin, onRegister, onDemo, demoLoading }: {
             <div className="text-sm font-bold">CryptoPulse <span className="font-normal text-[var(--muted-foreground)]">· скринер нового поколения</span></div>
           </div>
           <div className="flex items-center gap-5 text-xs text-[var(--muted-foreground)]">
-            <span className="flex items-center gap-1.5"><Activity className="h-3.5 w-3.5" /> v2.4.1</span>
+            <span className="flex items-center gap-1.5"><Activity className="h-3.5 w-3.5" /> v3.5.0</span>
             <span className="flex items-center gap-1.5"><LineChart className="h-3.5 w-3.5" /> LIVE-данные 8 бирж</span>
             <span className="flex items-center gap-1.5"><TrendingUp className="h-3.5 w-3.5" /> 2026</span>
           </div>

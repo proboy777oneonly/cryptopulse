@@ -5,7 +5,7 @@
 import os from 'os'
 import type { ServiceStats } from './types'
 
-const APP_VERSION = '3.0.0'
+const APP_VERSION = '3.5.0'
 
 let lastCpu = os.cpus().map((c) => c.times)
 let cpuLoadPct: number[] = []

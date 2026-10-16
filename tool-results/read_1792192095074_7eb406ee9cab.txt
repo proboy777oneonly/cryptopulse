@@ -1,0 +1,1018 @@
+     1→'use client'
+     2→
+     3→// ════════════════════════════════════════════════════════════════════
+     4→// Canvas-график свечей: зум колесом, панорама драгом во всех направлениях,
+     5→// кроссхэйр, рисовалки (тренд/гориз/верт/прямоугольник/фибо),
+     6→// линейка на колёсико (живёт, пока колёсико зажато) и в тулбаре,
+     7→// магнит с привязкой к OHLC на Ctrl.
+     8→// Рисунки хранятся в localStorage по ключу графика.
+     9→// ════════════════════════════════════════════════════════════════════
+    10→
+    11→import { useCallback, useEffect, useRef } from 'react'
+    12→import { cn } from '@/lib/utils'
+    13→
+    14→export interface Candle { t: number; o: number; h: number; l: number; c: number; v: number }
+    15→export type ChartTool = 'cursor' | 'trend' | 'hline' | 'vline' | 'rect' | 'fib' | 'ruler'
+    16→export type DrawType = 'trend' | 'hline' | 'vline' | 'rect' | 'fib'
+    17→
+    18→export interface ChartDrawing {
+    19→  id: string
+    20→  type: DrawType
+    21→  points: { t: number; p: number }[]
+    22→}
+    23→
+    24→const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]
+    25→const TWO_POINT: DrawType[] = ['trend', 'rect', 'fib']
+    26→
+    27→function clamp(v: number, a: number, b: number): number {
+    28→  return Math.max(a, Math.min(b, v))
+    29→}
+    30→
+    31→function niceStep(range: number, n: number): number {
+    32→  const raw = range / Math.max(1, n)
+    33→  if (!Number.isFinite(raw) || raw <= 0) return 1
+    34→  const mag = Math.pow(10, Math.floor(Math.log10(raw)))
+    35→  const norm = raw / mag
+    36→  const step = norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10
+    37→  return step * mag
+    38→}
+    39→
+    40→export function fmtChartPrice(p: number): string {
+    41→  const a = Math.abs(p)
+    42→  if (a >= 10000) return p.toLocaleString('en-US', { maximumFractionDigits: 1 })
+    43→  if (a >= 100) return p.toFixed(2)
+    44→  if (a >= 1) return p.toFixed(3)
+    45→  if (a >= 0.01) return p.toFixed(5)
+    46→  if (a >= 0.0001) return p.toFixed(7)
+    47→  return p.toExponential(3)
+    48→}
+    49→
+    50→function fmtAxisTime(t: number, interval: string): string {
+    51→  const d = new Date(t)
+    52→  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    53→  if (interval === '1d' || interval === '1w') {
+    54→    return d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })
+    55→  }
+    56→  if (interval === '1h' || interval === '4h') {
+    57→    return `${d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })} ${hhmm}`
+    58→  }
+    59→  return hhmm
+    60→}
+    61→
+    62→function fmtDuration(ms: number): string {
+    63→  const s = Math.round(ms / 1000)
+    64→  if (s < 90) return `${s}с`
+    65→  const m = Math.round(s / 60)
+    66→  if (m < 90) return `${m}м`
+    67→  const h = Math.round(m / 60)
+    68→  if (h < 36) return `${h}ч`
+    69→  return `${Math.round(h / 24)}д`
+    70→}
+    71→
+    72→interface MouseState {
+    73→  x: number
+    74→  y: number
+    75→  inside: boolean
+    76→  mode: 'idle' | 'pan' | 'draw2' | 'drag' | 'ruler'
+    77→  startX: number
+    78→  startY: number
+    79→  startOffset: number
+    80→  startPRange?: { min: number; max: number }
+    81→  pending?: { t: number; p: number }
+    82→  hoverId?: string
+    83→  grab?: { id: string; orig: { t: number; p: number }[]; idxStart: number; priceStart: number }
+    84→}
+    85→
+    86→/** состояние вида: масштаб/сдвиг по X + ручный диапазон цен по Y (панорама) */
+    87→interface ViewBox {
+    88→  bars: number
+    89→  offset: number
+    90→  pRange: { min: number; max: number } | null
+    91→}
+    92→
+    93→/** единая шкала графика: видимые бары, диапазон цен, преобразования координат */
+    94→interface Scale {
+    95→  cs: Candle[]
+    96→  intervalMs: number
+    97→  len: number
+    98→  rightIdx: number
+    99→  startIdx: number
+   100→  i0: number
+   101→  i1: number
+   102→  minP: number
+   103→  maxP: number
+   104→  maxV: number
+   105→  barW: number
+   106→  padL: number
+   107→  padR: number
+   108→  padT: number
+   109→  padB: number
+   110→  plotW: number
+   111→  fullH: number
+   112→  volH: number
+   113→  chartH: number
+   114→  xOfIdx: (i: number) => number
+   115→  idxOfT: (t: number) => number
+   116→  xOfT: (t: number) => number
+   117→  yOfP: (p: number) => number
+   118→  pOfY: (y: number) => number
+   119→  tOfX: (x: number) => number
+   120→}
+   121→
+   122→let drawId = 0
+   123→
+   124→function loadDrawings(key: string): ChartDrawing[] {
+   125→  try {
+   126→    const raw = localStorage.getItem(`cp-draw-${key}`)
+   127→    if (!raw) return []
+   128→    const arr = JSON.parse(raw) as ChartDrawing[]
+   129→    return Array.isArray(arr) ? arr.filter((d) => d && d.type && Array.isArray(d.points)) : []
+   130→  } catch {
+   131→    return []
+   132→  }
+   133→}
+   134→
+   135→function saveDrawings(key: string, list: ChartDrawing[]) {
+   136→  try {
+   137→    localStorage.setItem(`cp-draw-${key}`, JSON.stringify(list))
+   138→  } catch { /* quota — игнорируем */ }
+   139→}
+   140→
+   141→export interface CandleChartProps {
+   142→  candles: Candle[]
+   143→  interval: string
+   144→  /** ключ персистентности рисовалок; undefined — рисовалки выключены */
+   145→  chartKey?: string
+   146→  tool?: ChartTool
+   147→  onToolDone?: () => void
+   148→  livePrice?: number
+   149→  /** тема — триггер перерисовки при смене палитры */
+   150→  theme?: string
+   151→  className?: string
+   152→  showVolume?: boolean
+   153→  /** false = только кроссхэйр (мини-график) */
+   154→  interactive?: boolean
+   155→  /** инкремент извне → очистить все рисунки */
+   156→  clearTick?: number
+   157→  /** подпись слева сверху: биржа · рынок · тикер · ТФ */
+   158→  label?: string
+   159→  /** левый отступ канваса — место под вертикальную панель рисовалок */
+   160→  padLeft?: number
+   161→}
+   162→
+   163→export function CandleChart({
+   164→  candles, interval, chartKey, tool = 'cursor', onToolDone, livePrice,
+   165→  theme, className, showVolume = true, interactive = true, clearTick,
+   166→  label, padLeft = 6,
+   167→}: CandleChartProps) {
+   168→  const wrapRef = useRef<HTMLDivElement>(null)
+   169→  const canvasRef = useRef<HTMLCanvasElement>(null)
+   170→  const viewRef = useRef<ViewBox>({ bars: 130, offset: 0, pRange: null })
+   171→  const magnetRef = useRef(false)
+   172→  const mouseRef = useRef<MouseState>({ x: 0, y: 0, inside: false, mode: 'idle', startX: 0, startY: 0, startOffset: 0 })
+   173→  const drawingsRef = useRef<ChartDrawing[]>([])
+   174→  const rulerRef = useRef<{ t1: number; p1: number; t2: number; p2: number } | null>(null)
+   175→  const candlesRef = useRef<Candle[]>(candles)
+   176→  const toolRef = useRef(tool)
+   177→  const sizeRef = useRef({ w: 0, h: 0 })
+   178→
+   179→  // зеркала пропсов в рефах — только внутри эффектов
+   180→  useEffect(() => { candlesRef.current = candles }, [candles])
+   181→  useEffect(() => { toolRef.current = tool }, [tool])
+   182→
+   183→  // ── Цвета из CSS-переменных темы ──────────────────────────────────
+   184→  const readColors = useCallback(() => {
+   185→    if (typeof window === 'undefined') {
+   186→      return { bg: '#0b0e17', fg: '#e2e8f0', grid: 'rgba(255,255,255,0.06)', muted: '#7c8aa5', border: 'rgba(255,255,255,0.1)', pos: '#34d399', neg: '#f43f5e', acc: '#8b5cf6', card: '#111524' }
+   187→    }
+   188→    const cs = getComputedStyle(document.documentElement)
+   189→    const v = (n: string, f: string) => cs.getPropertyValue(n).trim() || f
+   190→    return {
+   191→      bg: v('--card-solid', '#0b0e17'),
+   192→      fg: v('--foreground', '#e2e8f0'),
+   193→      grid: v('--border', 'rgba(255,255,255,0.1)'),
+   194→      muted: v('--muted-foreground', '#7c8aa5'),
+   195→      border: v('--border', 'rgba(255,255,255,0.1)'),
+   196→      pos: v('--pos', '#34d399'),
+   197→      neg: v('--neg', '#f43f5e'),
+   198→      acc: v('--acc', '#8b5cf6'),
+   199→      card: v('--card-solid', '#111524'),
+   200→    }
+   201→  }, [])
+   202→
+   203→  // ── Геометрия ─────────────────────────────────────────────────────
+   204→  const geom = useCallback(() => {
+   205→    const w = sizeRef.current.w
+   206→    const h = sizeRef.current.h
+   207→    const padL = padLeft, padR = 64, padT = 10, padB = 20
+   208→    const plotW = Math.max(30, w - padL - padR)
+   209→    const fullH = Math.max(40, h - padT - padB)
+   210→    const volH = showVolume ? fullH * 0.16 : 0
+   211→    const chartH = fullH - volH - (showVolume ? 8 : 0)
+   212→    return { padL, padR, padT, padB, plotW, fullH, volH, chartH }
+   213→  }, [padLeft, showVolume])
+   214→
+   215→  // ── Единая шкала: видимые бары + диапазон цен ──────────────────
+   216→  // Единственная точка правды для отрисовки и всех обработчиков:
+   217→  // горизонтальный сдвиг (offset), ручная вертикальная панорама (pRange,
+   218→  // включается после вертикального драга) и живая цена.
+   219→  const computeScale = useCallback((): Scale | null => {
+   220→    const cs = candlesRef.current
+   221→    if (!cs || cs.length < 2) return null
+   222→    const view = viewRef.current
+   223→    const g = geom()
+   224→    const intervalMs = cs[1].t - cs[0].t || 60_000
+   225→    const len = cs.length
+   226→    view.bars = clamp(view.bars, 15, Math.max(60, len + 40))
+   227→    const rightIdx = clamp(len - view.offset, Math.max(5, view.bars * 0.35), len + view.bars * 0.35)
+   228→    const startIdx = rightIdx - view.bars
+   229→    const i0 = Math.max(0, Math.floor(startIdx))
+   230→    const i1 = Math.min(len - 1, Math.ceil(rightIdx))
+   231→    let minP = Infinity, maxP = -Infinity, maxV = 0
+   232→    for (let i = i0; i <= i1; i++) {
+   233→      const cd = cs[i]
+   234→      if (cd.l < minP) minP = cd.l
+   235→      if (cd.h > maxP) maxP = cd.h
+   236→      if (cd.v > maxV) maxV = cd.v
+   237→    }
+   238→    if (!Number.isFinite(minP) || !Number.isFinite(maxP)) {
+   239→      minP = 0
+   240→      maxP = 1
+   241→    }
+   242→    if (livePrice && livePrice > 0) {
+   243→      if (livePrice < minP) minP = livePrice
+   244→      if (livePrice > maxP) maxP = livePrice
+   245→    }
+   246→    const padP = (maxP - minP) * 0.07 || Math.abs(maxP) * 0.01 || 1
+   247→    let lo = minP - padP
+   248→    let hi = maxP + padP
+   249→    if (view.pRange) {
+   250→      lo = view.pRange.min
+   251→      hi = view.pRange.max
+   252→    }
+   253→    if (!(hi > lo)) hi = lo + Math.abs(lo) * 0.02 + 1
+   254→    const barW = g.plotW / view.bars
+   255→    const xOfIdx = (i: number) => g.padL + (i - startIdx + 0.5) * barW
+   256→    const idxOfT = (t: number) => (t - cs[0].t) / intervalMs
+   257→    return {
+   258→      cs, intervalMs, len, rightIdx, startIdx, i0, i1, minP: lo, maxP: hi, maxV, barW,
+   259→      padL: g.padL, padR: g.padR, padT: g.padT, padB: g.padB,
+   260→      plotW: g.plotW, fullH: g.fullH, volH: g.volH, chartH: g.chartH,
+   261→      xOfIdx, idxOfT,
+   262→      xOfT: (t: number) => xOfIdx(idxOfT(t)),
+   263→      yOfP: (p: number) => g.padT + ((hi - p) / (hi - lo)) * g.chartH,
+   264→      pOfY: (y: number) => hi - ((y - g.padT) / g.chartH) * (hi - lo),
+   265→      tOfX: (x: number) => cs[0].t + ((x - g.padL) / barW + startIdx - 0.5) * intervalMs,
+   266→    }
+   267→  }, [geom, livePrice])
+   268→
+   269→  // магнит (Ctrl): привязка точки к OHLC ближайшей свечи
+   270→  const snapPoint = useCallback((t: number, p: number): { t: number; p: number } => {
+   271→    const cs = candlesRef.current
+   272→    if (!magnetRef.current || !cs || cs.length < 2) return { t, p }
+   273→    const intervalMs = cs[1].t - cs[0].t || 60_000
+   274→    const idx = clamp(Math.round((t - cs[0].t) / intervalMs), 0, cs.length - 1)
+   275→    const cd = cs[idx]
+   276→    let best = cd.c
+   277→    for (const v of [cd.o, cd.h, cd.l, cd.c]) {
+   278→      if (Math.abs(v - p) < Math.abs(best - p)) best = v
+   279→    }
+   280→    return { t: cd.t, p: best }
+   281→  }, [])
+   282→
+   283→  // ── Главная отрисовка ─────────────────────────────────────────────
+   284→  const redraw = useCallback(() => {
+   285→    const cv = canvasRef.current
+   286→    if (!cv) return
+   287→    const ctx = cv.getContext('2d')
+   288→    if (!ctx) return
+   289→    const dpr = window.devicePixelRatio || 1
+   290→    const w = sizeRef.current.w
+   291→    const h = sizeRef.current.h
+   292→    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+   293→      cv.width = Math.round(w * dpr)
+   294→      cv.height = Math.round(h * dpr)
+   295→    }
+   296→    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+   297→    const C = readColors()
+   298→    ctx.clearRect(0, 0, w, h)
+   299→    ctx.fillStyle = C.bg
+   300→    ctx.fillRect(0, 0, w, h)
+   301→
+   302→    const sc = computeScale()
+   303→    if (!sc) {
+   304→      ctx.fillStyle = C.muted
+   305→      ctx.font = '12px ui-monospace, Menlo, monospace'
+   306→      ctx.textAlign = 'center'
+   307→      ctx.fillText('Загрузка свечей…', w / 2, h / 2)
+   308→      return
+   309→    }
+   310→    const cs = sc.cs
+   311→    const {
+   312→      padL, padR, padT, plotW, fullH, volH, chartH, barW,
+   313→      i0, i1, minP, maxP, maxV, len, intervalMs, startIdx,
+   314→    } = sc
+   315→    const xOfIdx = sc.xOfIdx
+   316→    const xOfT = sc.xOfT
+   317→    const yOfP = sc.yOfP
+   318→    const pOfY = sc.pOfY
+   319→    const tOfX = sc.tOfX
+   320→
+   321→    // сетка + шкала цены
+   322→    ctx.font = '10px ui-monospace, Menlo, monospace'
+   323→    ctx.textBaseline = 'middle'
+   324→    const step = niceStep(maxP - minP, 6)
+   325→    ctx.strokeStyle = C.grid
+   326→    ctx.lineWidth = 1
+   327→    ctx.fillStyle = C.muted
+   328→    ctx.textAlign = 'left'
+   329→    for (let p = Math.ceil(minP / step) * step; p <= maxP; p += step) {
+   330→      const y = yOfP(p)
+   331→      ctx.beginPath()
+   332→      ctx.moveTo(padL, Math.round(y) + 0.5)
+   333→      ctx.lineTo(padL + plotW, Math.round(y) + 0.5)
+   334→      ctx.stroke()
+   335→      ctx.fillText(fmtChartPrice(p), padL + plotW + 6, y)
+   336→    }
+   337→
+   338→    // шкала времени
+   339→    const labelEvery = Math.max(1, Math.ceil(92 / barW))
+   340→    ctx.textAlign = 'center'
+   341→    for (let i = i0; i <= i1; i++) {
+   342→      if (i % labelEvery !== 0) continue
+   343→      const x = xOfIdx(i)
+   344→      ctx.strokeStyle = C.grid
+   345→      ctx.beginPath()
+   346→      ctx.moveTo(Math.round(x) + 0.5, padT)
+   347→      ctx.lineTo(Math.round(x) + 0.5, padT + fullH)
+   348→      ctx.stroke()
+   349→      ctx.fillStyle = C.muted
+   350→      ctx.fillText(fmtAxisTime(cs[i].t, interval), x, padT + fullH + 11)
+   351→    }
+   352→
+   353→    // объёмы
+   354→    if (showVolume && maxV > 0) {
+   355→      const volTop = padT + chartH + 8
+   356→      for (let i = i0; i <= i1; i++) {
+   357→        const cd = cs[i]
+   358→        const x = xOfIdx(i)
+   359→        const vh = (cd.v / maxV) * volH
+   360→        ctx.fillStyle = cd.c >= cd.o ? `${C.pos}33` : `${C.neg}33`
+   361→        ctx.fillRect(x - barW * 0.33, volTop + volH - vh, Math.max(1, barW * 0.66), vh)
+   362→      }
+   363→    }
+   364→
+   365→    // свечи
+   366→    const bodyW = Math.max(1, barW * 0.66)
+   367→    for (let i = i0; i <= i1; i++) {
+   368→      const cd = cs[i]
+   369→      const x = xOfIdx(i)
+   370→      const up = cd.c >= cd.o
+   371→      const col = up ? C.pos : C.neg
+   372→      ctx.strokeStyle = col
+   373→      ctx.lineWidth = 1
+   374→      ctx.beginPath()
+   375→      ctx.moveTo(Math.round(x) + 0.5, yOfP(cd.h))
+   376→      ctx.lineTo(Math.round(x) + 0.5, yOfP(cd.l))
+   377→      ctx.stroke()
+   378→      const yO = yOfP(cd.o)
+   379→      const yC = yOfP(cd.c)
+   380→      const top = Math.min(yO, yC)
+   381→      const bh = Math.max(1, Math.abs(yC - yO))
+   382→      ctx.fillStyle = col
+   383→      ctx.fillRect(x - bodyW / 2, top, bodyW, bh)
+   384→    }
+   385→
+   386→    // последняя цена (при ручной панораме чип прилипает к краю области)
+   387→    const lastC = cs[len - 1]
+   388→    const lastP = livePrice && livePrice > 0 ? livePrice : lastC.c
+   389→    const lastUp = lastP >= lastC.o
+   390→    const yLastRaw = yOfP(lastP)
+   391→    const yLast = clamp(yLastRaw, padT + 8, padT + chartH - 8)
+   392→    if (yLastRaw >= padT && yLastRaw <= padT + chartH) {
+   393→      ctx.setLineDash([4, 4])
+   394→      ctx.strokeStyle = lastUp ? C.pos : C.neg
+   395→      ctx.lineWidth = 1
+   396→      ctx.beginPath()
+   397→      ctx.moveTo(padL, Math.round(yLast) + 0.5)
+   398→      ctx.lineTo(padL + plotW, Math.round(yLast) + 0.5)
+   399→      ctx.stroke()
+   400→      ctx.setLineDash([])
+   401→    }
+   402→    // чип последней цены
+   403→    ctx.fillStyle = lastUp ? C.pos : C.neg
+   404→    const lpTxt = fmtChartPrice(lastP)
+   405→    ctx.font = 'bold 10px ui-monospace, Menlo, monospace'
+   406→    const lpW = ctx.measureText(lpTxt).width + 10
+   407→    roundRect(ctx, padL + plotW + 2, yLast - 8, Math.min(lpW, padR - 4), 16, 4)
+   408→    ctx.fill()
+   409→    ctx.fillStyle = '#0b0e17'
+   410→    ctx.textAlign = 'left'
+   411→    ctx.fillText(lpTxt, padL + plotW + 7, yLast)
+   412→
+   413→    // легенда: подпись графика (биржа · рынок · тикер · ТФ) + OHLC
+   414→    const ms = mouseRef.current
+   415→    if (plotW >= 420) {
+   416→      ctx.textAlign = 'left'
+   417→      if (label) {
+   418→        ctx.font = 'bold 10px ui-monospace, Menlo, monospace'
+   419→        let txt = label
+   420→        const maxLabelW = Math.max(140, plotW / 2 - 150)
+   421→        while (ctx.measureText(txt).width > maxLabelW && txt.includes(' · ')) {
+   422→          txt = txt.split(' · ').slice(1).join(' · ')
+   423→        }
+   424→        ctx.fillStyle = C.fg
+   425→        ctx.fillText(txt, padL + 4, padT + 10)
+   426→      }
+   427→      const hovIdx = ms.inside ? clamp(Math.round(startIdx + (ms.x - padL) / barW - 0.5), 0, len - 1) : len - 1
+   428→      const hcd = cs[hovIdx]
+   429→      if (hcd) {
+   430→        const chg = hcd.o > 0 ? ((hcd.c - hcd.o) / hcd.o) * 100 : 0
+   431→        const up = hcd.c >= hcd.o
+   432→        ctx.font = '10px ui-monospace, Menlo, monospace'
+   433→        const y0 = padT + 34
+   434→        ctx.fillStyle = C.muted
+   435→        ctx.fillText('O', padL + 4, y0)
+   436→        ctx.fillText('H', padL + 62, y0)
+   437→        ctx.fillText('L', padL + 130, y0)
+   438→        ctx.fillStyle = up ? C.pos : C.neg
+   439→        ctx.fillText(fmtChartPrice(hcd.o), padL + 14, y0)
+   440→        ctx.fillText(fmtChartPrice(hcd.h), padL + 72, y0)
+   441→        ctx.fillText(fmtChartPrice(hcd.l), padL + 140, y0)
+   442→        ctx.fillText(`C ${fmtChartPrice(hcd.c)}  ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`, padL + 200, y0)
+   443→      }
+   444→    }
+   445→
+   446→    // магнит (Ctrl): индикатор + привязка курсора к OHLC
+   447→    if (magnetRef.current && ms.inside) {
+   448→      const sn = snapPoint(tOfX(ms.x), pOfY(ms.y))
+   449→      const sx = xOfT(sn.t)
+   450→      const sy = yOfP(sn.p)
+   451→      ctx.strokeStyle = C.acc
+   452→      ctx.lineWidth = 1.5
+   453→      ctx.beginPath()
+   454→      ctx.arc(sx, sy, 6, 0, Math.PI * 2)
+   455→      ctx.stroke()
+   456→      ctx.fillStyle = `${C.acc}cc`
+   457→      ctx.beginPath()
+   458→      ctx.arc(sx, sy, 2, 0, Math.PI * 2)
+   459→      ctx.fill()
+   460→      ctx.font = 'bold 9px ui-monospace, Menlo, monospace'
+   461→      const mTxt = 'МАГНИТ'
+   462→      const mw = ctx.measureText(mTxt).width + 12
+   463→      const mx = clamp(padL + plotW - mw - 6, padL, padL + plotW - mw)
+   464→      const my = plotW >= 420 ? padT + 12 : padT + 56
+   465→      roundRect(ctx, mx, my, mw, 15, 4)
+   466→      ctx.fillStyle = `${C.acc}26`
+   467→      ctx.fill()
+   468→      roundRect(ctx, mx, my, mw, 15, 4)
+   469→      ctx.strokeStyle = `${C.acc}88`
+   470→      ctx.lineWidth = 1
+   471→      ctx.stroke()
+   472→      ctx.fillStyle = C.acc
+   473→      ctx.textAlign = 'left'
+   474→      ctx.fillText(mTxt, mx + 6, my + 8)
+   475→    }
+   476→
+   477→    // ── Рисунки ────────────────────────────────────────────────────
+   478→    const strokeDrawing = (d: ChartDrawing, hover: boolean) => {
+   479→      const pts = d.points.map((pt) => ({ x: xOfT(pt.t), y: yOfP(pt.p) }))
+   480→      const col = hover ? C.acc : C.acc
+   481→      ctx.strokeStyle = col
+   482→      ctx.lineWidth = hover ? 2 : 1.5
+   483→      ctx.setLineDash([])
+   484→      if (d.type === 'trend' && pts.length >= 2) {
+   485→        ctx.beginPath()
+   486→        ctx.moveTo(pts[0].x, pts[0].y)
+   487→        ctx.lineTo(pts[1].x, pts[1].y)
+   488→        ctx.stroke()
+   489→        dot(pts[0]); dot(pts[1])
+   490→      } else if (d.type === 'hline' && pts.length >= 1) {
+   491→        const y = pts[0].y
+   492→        ctx.beginPath()
+   493→        ctx.moveTo(padL, y)
+   494→        ctx.lineTo(padL + plotW, y)
+   495→        ctx.stroke()
+   496→        // чип цены справа
+   497→        ctx.fillStyle = col
+   498→        ctx.font = 'bold 9px ui-monospace, Menlo, monospace'
+   499→        const txt = fmtChartPrice(d.points[0].p)
+   500→        const tw = ctx.measureText(txt).width + 8
+   501→        roundRect(ctx, padL + plotW + 2, y - 7, Math.min(tw, padR - 4), 14, 3)
+   502→        ctx.fill()
+   503→        ctx.fillStyle = '#0b0e17'
+   504→        ctx.fillText(txt, padL + plotW + 6, y)
+   505→      } else if (d.type === 'vline' && pts.length >= 1) {
+   506→        const x = pts[0].x
+   507→        ctx.setLineDash([2, 3])
+   508→        ctx.beginPath()
+   509→        ctx.moveTo(x, padT)
+   510→        ctx.lineTo(x, padT + fullH)
+   511→        ctx.stroke()
+   512→        ctx.setLineDash([])
+   513→      } else if (d.type === 'rect' && pts.length >= 2) {
+   514→        const x = Math.min(pts[0].x, pts[1].x), y = Math.min(pts[0].y, pts[1].y)
+   515→        const rw = Math.abs(pts[1].x - pts[0].x), rh = Math.abs(pts[1].y - pts[0].y)
+   516→        ctx.fillStyle = `${C.acc}14`
+   517→        ctx.fillRect(x, y, rw, rh)
+   518→        ctx.strokeRect(x, y, rw, rh)
+   519→        dot(pts[0]); dot(pts[1])
+   520→      } else if (d.type === 'fib' && pts.length >= 2) {
+   521→        const p1 = d.points[0], p2 = d.points[1]
+   522→        const xa = Math.min(pts[0].x, pts[1].x), xb = Math.max(pts[0].x, pts[1].x)
+   523→        ctx.strokeStyle = `${C.acc}cc`
+   524→        ctx.beginPath()
+   525→        ctx.moveTo(pts[0].x, pts[0].y)
+   526→        ctx.lineTo(pts[1].x, pts[1].y)
+   527→        ctx.stroke()
+   528→        ctx.font = '9px ui-monospace, Menlo, monospace'
+   529→        ctx.textAlign = 'left'
+   530→        for (const lv of FIB_LEVELS) {
+   531→          const price = p1.p + (p2.p - p1.p) * lv
+   532→          const y = yOfP(price)
+   533→          ctx.strokeStyle = lv === 0 || lv === 1 ? `${C.acc}aa` : `${C.acc}55`
+   534→          ctx.setLineDash(lv === 0.5 ? [3, 3] : [])
+   535→          ctx.beginPath()
+   536→          ctx.moveTo(xa, y)
+   537→          ctx.lineTo(xb + 26, y)
+   538→          ctx.stroke()
+   539→          ctx.setLineDash([])
+   540→          ctx.fillStyle = `${C.acc}dd`
+   541→          ctx.fillText(`${lv.toFixed(3)}  ${fmtChartPrice(price)}`, xa + 4, y - 6)
+   542→        }
+   543→        dot(pts[0]); dot(pts[1])
+   544→      }
+   545→    }
+   546→    const dot = (pt: { x: number; y: number }) => {
+   547→      ctx.fillStyle = C.acc
+   548→      ctx.beginPath()
+   549→      ctx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2)
+   550→      ctx.fill()
+   551→    }
+   552→    function roundRect(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+   553→      c.beginPath()
+   554→      c.moveTo(x + r, y)
+   555→      c.arcTo(x + w, y, x + w, y + h, r)
+   556→      c.arcTo(x + w, y + h, x, y + h, r)
+   557→      c.arcTo(x, y + h, x, y, r)
+   558→      c.arcTo(x, y, x + w, y, r)
+   559→      c.closePath()
+   560→    }
+   561→
+   562→    for (const d of drawingsRef.current) {
+   563→      strokeDrawing(d, ms.hoverId === d.id)
+   564→    }
+   565→
+   566→    // предпросмотр рисования
+   567→    if (ms.mode === 'draw2' && ms.pending) {
+   568→      const p2 = snapPoint(tOfX(ms.x), pOfY(ms.y))
+   569→      const preview: ChartDrawing = {
+   570→        id: 'preview',
+   571→        type: (TWO_POINT.includes(toolRef.current as DrawType) ? toolRef.current : 'trend') as DrawType,
+   572→        points: [ms.pending, p2],
+   573→      }
+   574→      ctx.globalAlpha = 0.7
+   575→      strokeDrawing(preview, false)
+   576→      ctx.globalAlpha = 1
+   577→    }
+   578→
+   579→    // ── Линейка ────────────────────────────────────────────────────
+   580→    const r = rulerRef.current
+   581→    let rulerLive = r
+   582→    if (ms.mode === 'ruler' && ms.pending) {
+   583→      const sn2 = snapPoint(tOfX(ms.x), pOfY(ms.y))
+   584→      rulerLive = { t1: ms.pending.t, p1: ms.pending.p, t2: sn2.t, p2: sn2.p }
+   585→    }
+   586→    if (rulerLive) {
+   587→      const x1 = xOfT(rulerLive.t1), y1 = yOfP(rulerLive.p1)
+   588→      const x2 = xOfT(rulerLive.t2), y2 = yOfP(rulerLive.p2)
+   589→      const up = rulerLive.p2 >= rulerLive.p1
+   590→      const col = up ? C.pos : C.neg
+   591→      const rx = Math.min(x1, x2), ry = Math.min(y1, y2)
+   592→      const rw = Math.abs(x2 - x1), rh = Math.abs(y2 - y1)
+   593→      ctx.fillStyle = up ? `${C.pos}18` : `${C.neg}18`
+   594→      ctx.fillRect(rx, ry, rw, rh)
+   595→      ctx.strokeStyle = col
+   596→      ctx.lineWidth = 1.5
+   597→      ctx.strokeRect(rx, ry, rw, rh)
+   598→      // подпись
+   599→      const dP = rulerLive.p2 - rulerLive.p1
+   600→      const dPct = rulerLive.p1 > 0 ? (dP / rulerLive.p1) * 100 : 0
+   601→      const bars = Math.abs(Math.round((rulerLive.t2 - rulerLive.t1) / intervalMs))
+   602→      const lines = [
+   603→        `${dP >= 0 ? '+' : ''}${fmtChartPrice(dP)}  (${dPct >= 0 ? '+' : ''}${dPct.toFixed(2)}%)`,
+   604→        `${bars} бар(ов) · ${fmtDuration(Math.abs(rulerLive.t2 - rulerLive.t1))}`,
+   605→      ]
+   606→      ctx.font = 'bold 10px ui-monospace, Menlo, monospace'
+   607→      const bw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 14
+   608→      const bx = clamp(x2 + 10, padL, padL + plotW - bw - 4)
+   609→      const by = clamp(y2 - 40, padT + 4, padT + fullH - 40)
+   610→      ctx.fillStyle = C.card
+   611→      roundRect(ctx, bx, by, bw, 36, 6)
+   612→      ctx.fill()
+   613→      ctx.strokeStyle = col
+   614→      ctx.lineWidth = 1
+   615→      roundRect(ctx, bx, by, bw, 36, 6)
+   616→      ctx.stroke()
+   617→      ctx.fillStyle = col
+   618→      ctx.textAlign = 'left'
+   619→      ctx.fillText(lines[0], bx + 7, by + 11)
+   620→      ctx.fillStyle = C.muted
+   621→      ctx.fillText(lines[1], bx + 7, by + 25)
+   622→    }
+   623→
+   624→    // ── Кроссхэйр ──────────────────────────────────────────────────
+   625→    if (ms.inside && ms.x > padL && ms.x < padL + plotW && ms.y > padT && ms.y < padT + fullH) {
+   626→      ctx.setLineDash([3, 3])
+   627→      ctx.strokeStyle = `${C.muted}88`
+   628→      ctx.lineWidth = 1
+   629→      ctx.beginPath()
+   630→      ctx.moveTo(Math.round(ms.x) + 0.5, padT)
+   631→      ctx.lineTo(Math.round(ms.x) + 0.5, padT + fullH)
+   632→      ctx.moveTo(padL, Math.round(ms.y) + 0.5)
+   633→      ctx.lineTo(padL + plotW, Math.round(ms.y) + 0.5)
+   634→      ctx.stroke()
+   635→      ctx.setLineDash([])
+   636→      // чип цены
+   637→      const cpTxt = fmtChartPrice(pOfY(ms.y))
+   638→      ctx.font = 'bold 10px ui-monospace, Menlo, monospace'
+   639→      const cw = ctx.measureText(cpTxt).width + 10
+   640→      ctx.fillStyle = C.muted
+   641→      roundRect(ctx, padL + plotW + 2, ms.y - 8, Math.min(cw, padR - 4), 16, 4)
+   642→      ctx.fill()
+   643→      ctx.fillStyle = '#0b0e17'
+   644→      ctx.textAlign = 'left'
+   645→      ctx.fillText(cpTxt, padL + plotW + 7, ms.y)
+   646→      // чип времени
+   647→      const ctTxt = fmtAxisTime(tOfX(ms.x), interval)
+   648→      const tw2 = ctx.measureText(ctTxt).width + 10
+   649→      ctx.fillStyle = C.muted
+   650→      roundRect(ctx, clamp(ms.x - tw2 / 2, padL, padL + plotW - tw2), padT + fullH + 2, tw2, 15, 4)
+   651→      ctx.fill()
+   652→      ctx.fillStyle = '#0b0e17'
+   653→      ctx.textAlign = 'center'
+   654→      ctx.fillText(ctTxt, clamp(ms.x, padL + tw2 / 2, padL + plotW - tw2 / 2), padT + fullH + 10)
+   655→    }
+   656→  }, [computeScale, interval, label, livePrice, readColors, showVolume, snapPoint])
+   657→
+   658→  // ── Хит-тест рисунка под курсором ─────────────────────────────────
+   659→  const hitTest = useCallback((x: number, y: number): string | null => {
+   660→    if (!chartKey) return null
+   661→    const sc = computeScale()
+   662→    if (!sc) return null
+   663→    const { padL, plotW, padT, fullH } = sc
+   664→
+   665→    const near = (ax: number, ay: number, bx: number, by: number): boolean => {
+   666→      const dx = bx - ax, dy = by - ay
+   667→      const l2 = dx * dx + dy * dy
+   668→      if (l2 === 0) return Math.hypot(x - ax, y - ay) < 7
+   669→      let t = ((x - ax) * dx + (y - ay) * dy) / l2
+   670→      t = clamp(t, 0, 1)
+   671→      return Math.hypot(x - (ax + t * dx), y - (ay + t * dy)) < 7
+   672→    }
+   673→
+   674→    for (const d of drawingsRef.current) {
+   675→      const pts = d.points.map((pt) => ({ x: sc.xOfT(pt.t), y: sc.yOfP(pt.p) }))
+   676→      if (d.type === 'trend' && pts.length >= 2) {
+   677→        if (near(pts[0].x, pts[0].y, pts[1].x, pts[1].y)) return d.id
+   678→      } else if (d.type === 'hline' && pts.length >= 1) {
+   679→        if (near(padL, pts[0].y, padL + plotW, pts[0].y)) return d.id
+   680→      } else if (d.type === 'vline' && pts.length >= 1) {
+   681→        if (near(pts[0].x, padT, pts[0].x, padT + fullH)) return d.id
+   682→      } else if (d.type === 'rect' && pts.length >= 2) {
+   683→        const x1 = Math.min(pts[0].x, pts[1].x), x2 = Math.max(pts[0].x, pts[1].x)
+   684→        const y1 = Math.min(pts[0].y, pts[1].y), y2 = Math.max(pts[0].y, pts[1].y)
+   685→        if (near(x1, y1, x2, y1) || near(x1, y2, x2, y2) || near(x1, y1, x1, y2) || near(x2, y1, x2, y2)) return d.id
+   686→      } else if (d.type === 'fib' && pts.length >= 2) {
+   687→        if (near(pts[0].x, pts[0].y, pts[1].x, pts[1].y)) return d.id
+   688→      }
+   689→    }
+   690→    return null
+   691→  }, [chartKey, computeScale])
+   692→
+   693→  // ── Загрузка рисунков при смене ключа ─────────────────────────────
+   694→  const redrawRef = useRef(redraw)
+   695→  useEffect(() => { redrawRef.current = redraw }, [redraw])
+   696→
+   697→  useEffect(() => {
+   698→    if (chartKey) {
+   699→      drawingsRef.current = loadDrawings(chartKey)
+   700→      rulerRef.current = null
+   701→    } else {
+   702→      drawingsRef.current = []
+   703→    }
+   704→    viewRef.current = { bars: 130, offset: 0, pRange: null }
+   705→    redrawRef.current()
+   706→  }, [chartKey])
+   707→
+   708→  // перерисовка при новых данных / теме / цене
+   709→  useEffect(() => { redrawRef.current() }, [candles, theme, livePrice])
+   710→
+   711→  // внешняя очистка рисовалок (кнопка «корзина»)
+   712→  const firstClear = useRef(true)
+   713→  useEffect(() => {
+   714→    if (firstClear.current) {
+   715→      firstClear.current = false
+   716→      return
+   717→    }
+   718→    drawingsRef.current = []
+   719→    rulerRef.current = null
+   720→    redrawRef.current()
+   721→  }, [clearTick])
+   722→
+   723→  // ресайз
+   724→  useEffect(() => {
+   725→    const wrap = wrapRef.current
+   726→    if (!wrap) return
+   727→    const ro = new ResizeObserver(() => {
+   728→      const r = wrap.getBoundingClientRect()
+   729→      sizeRef.current = { w: r.width, h: r.height }
+   730→      redrawRef.current()
+   731→    })
+   732→    ro.observe(wrap)
+   733→    const r = wrap.getBoundingClientRect()
+   734→    sizeRef.current = { w: r.width, h: r.height }
+   735→    redrawRef.current()
+   736→    return () => ro.disconnect()
+   737→  }, [])
+   738→
+   739→  // Esc — отмена рисования / линейка / курсор
+   740→  useEffect(() => {
+   741→    const onKey = (e: KeyboardEvent) => {
+   742→      if (e.key !== 'Escape') return
+   743→      const ms = mouseRef.current
+   744→      if (ms.mode === 'draw2') {
+   745→        ms.mode = 'idle'
+   746→        ms.pending = undefined
+   747→        onToolDone?.()
+   748→        redrawRef.current()
+   749→      } else if (rulerRef.current || ms.mode === 'ruler') {
+   750→        rulerRef.current = null
+   751→        ms.mode = 'idle'
+   752→        ms.pending = undefined
+   753→        redrawRef.current()
+   754→      } else if (toolRef.current !== 'cursor') {
+   755→        onToolDone?.()
+   756→      }
+   757→    }
+   758→    window.addEventListener('keydown', onKey)
+   759→    return () => window.removeEventListener('keydown', onKey)
+   760→  }, [onToolDone])
+   761→
+   762→  // Ctrl — магнит: привязка рисовалок/линейки к OHLC свечей, пока зажат
+   763→  useEffect(() => {
+   764→    if (!interactive) return
+   765→    const apply = (down: boolean, e: KeyboardEvent) => {
+   766→      if (e.key !== 'Control' || magnetRef.current === down) return
+   767→      magnetRef.current = down
+   768→      redrawRef.current()
+   769→    }
+   770→    const onKeyDown = (e: KeyboardEvent) => apply(true, e)
+   771→    const onKeyUp = (e: KeyboardEvent) => apply(false, e)
+   772→    const onBlur = () => {
+   773→      if (!magnetRef.current) return
+   774→      magnetRef.current = false
+   775→      redrawRef.current()
+   776→    }
+   777→    window.addEventListener('keydown', onKeyDown)
+   778→    window.addEventListener('keyup', onKeyUp)
+   779→    window.addEventListener('blur', onBlur)
+   780→    return () => {
+   781→      window.removeEventListener('keydown', onKeyDown)
+   782→      window.removeEventListener('keyup', onKeyUp)
+   783→      window.removeEventListener('blur', onBlur)
+   784→    }
+   785→  }, [interactive])
+   786→
+   787→  // отпустили колёсико мыши (в любой точке окна) — линейка выключается
+   788→  useEffect(() => {
+   789→    if (!interactive) return
+   790→    const onWinMouseUp = () => {
+   791→      const ms = mouseRef.current
+   792→      if (ms.mode !== 'ruler') return
+   793→      ms.mode = 'idle'
+   794→      ms.pending = undefined
+   795→      rulerRef.current = null
+   796→      redrawRef.current()
+   797→    }
+   798→    window.addEventListener('mouseup', onWinMouseUp)
+   799→    return () => window.removeEventListener('mouseup', onWinMouseUp)
+   800→  }, [interactive])
+   801→
+   802→  // ── Обработчики мыши ──────────────────────────────────────────────
+   803→  const pos = (e: React.MouseEvent | MouseEvent) => {
+   804→    const cv = canvasRef.current!
+   805→    const r = cv.getBoundingClientRect()
+   806→    return { x: e.clientX - r.left, y: e.clientY - r.top }
+   807→  }
+   808→
+   809→  const onMouseMove = (e: React.MouseEvent) => {
+   810→    const ms = mouseRef.current
+   811→    const p = pos(e)
+   812→    ms.x = p.x
+   813→    ms.y = p.y
+   814→    ms.inside = true
+   815→    const cv = canvasRef.current
+   816→    if (!cv) return
+   817→
+   818→    if (ms.mode === 'pan') {
+   819→      const sc = computeScale()
+   820→      if (sc) {
+   821→        const view = viewRef.current
+   822→        view.offset = ms.startOffset + (p.x - ms.startX) / sc.barW
+   823→        // вертикальная панорама: диапазон цен следует за курсором
+   824→        if (ms.startPRange && Math.abs(p.y - ms.startY) > 3) {
+   825→          const range = ms.startPRange.max - ms.startPRange.min
+   826→          if (range > 0 && Number.isFinite(range)) {
+   827→            const shift = ((p.y - ms.startY) / sc.chartH) * range
+   828→            view.pRange = { min: ms.startPRange.min + shift, max: ms.startPRange.max + shift }
+   829→          }
+   830→        }
+   831→      }
+   832→    } else if (ms.mode === 'drag' && ms.grab) {
+   833→      const sc = computeScale()
+   834→      if (sc) {
+   835→        const dIdx = (p.x - ms.startX) / sc.barW
+   836→        const dPrice = sc.pOfY(p.y) - ms.grab.priceStart
+   837→        const dTime = dIdx * sc.intervalMs
+   838→        const target = drawingsRef.current.find((d) => d.id === ms.grab!.id)
+   839→        if (target) {
+   840→          target.points = ms.grab.orig.map((pt) => ({ t: pt.t + dTime, p: pt.p + dPrice }))
+   841→          if (chartKey) saveDrawings(chartKey, drawingsRef.current)
+   842→        }
+   843→      }
+   844→    } else if (ms.mode === 'idle') {
+   845→      ms.hoverId = hitTest(p.x, p.y) ?? undefined
+   846→      cv.style.cursor = ms.hoverId ? 'pointer' : 'crosshair'
+   847→    }
+   848→    redraw()
+   849→  }
+   850→
+   851→  const onMouseDown = (e: React.MouseEvent) => {
+   852→    if (!interactive) return
+   853→    const ms = mouseRef.current
+   854→    const p = pos(e)
+   855→    const cv = canvasRef.current
+   856→    if (!cv) return
+   857→    const sc = computeScale()
+   858→    if (!sc) return
+   859→    const anchor = snapPoint(sc.tOfX(p.x), sc.pOfY(p.y))
+   860→
+   861→    // средняя кнопка — линейка (живёт, пока колёсико зажато)
+   862→    if (e.button === 1) {
+   863→      e.preventDefault()
+   864→      ms.mode = 'ruler'
+   865→      ms.pending = anchor
+   866→      redraw()
+   867→      return
+   868→    }
+   869→    // правая кнопка — удалить рисунок под курсором
+   870→    if (e.button === 2) {
+   871→      const id = hitTest(p.x, p.y)
+   872→      if (id) {
+   873→        drawingsRef.current = drawingsRef.current.filter((d) => d.id !== id)
+   874→        if (chartKey) saveDrawings(chartKey, drawingsRef.current)
+   875→        redraw()
+   876→      }
+   877→      return
+   878→    }
+   879→    if (e.button !== 0) return
+   880→
+   881→    const t = toolRef.current
+   882→    if (t === 'cursor') {
+   883→      const id = hitTest(p.x, p.y)
+   884→      if (id && chartKey) {
+   885→        const target = drawingsRef.current.find((d) => d.id === id)
+   886→        if (target) {
+   887→          ms.mode = 'drag'
+   888→          ms.grab = { id, orig: target.points.map((pt) => ({ ...pt })), idxStart: sc.idxOfT(anchor.t), priceStart: anchor.p }
+   889→          ms.startX = p.x
+   890→          ms.startY = p.y
+   891→        }
+   892→      } else {
+   893→        ms.mode = 'pan'
+   894→        ms.startX = p.x
+   895→        ms.startY = p.y
+   896→        ms.startOffset = viewRef.current.offset
+   897→        ms.startPRange = { min: sc.minP, max: sc.maxP }
+   898→        cv.style.cursor = 'grabbing'
+   899→      }
+   900→      redraw()
+   901→      return
+   902→    }
+   903→    if (t === 'ruler') {
+   904→      if (ms.mode === 'draw2' && ms.pending) {
+   905→        rulerRef.current = { t1: ms.pending.t, p1: ms.pending.p, t2: anchor.t, p2: anchor.p }
+   906→        ms.mode = 'idle'
+   907→        ms.pending = undefined
+   908→        onToolDone?.()
+   909→      } else {
+   910→        ms.mode = 'draw2'
+   911→        ms.pending = anchor
+   912→      }
+   913→      redraw()
+   914→      return
+   915→    }
+   916→    if (t === 'hline' || t === 'vline') {
+   917→      if (chartKey) {
+   918→        drawId += 1
+   919→        drawingsRef.current = [...drawingsRef.current, { id: `d${Date.now()}_${drawId}`, type: t, points: [anchor] }]
+   920→        saveDrawings(chartKey, drawingsRef.current)
+   921→      }
+   922→      onToolDone?.()
+   923→      redraw()
+   924→      return
+   925→    }
+   926→    // двухточечные: тренд / прямоугольник / фибо
+   927→    if (ms.mode === 'draw2' && ms.pending) {
+   928→      if (chartKey) {
+   929→        drawId += 1
+   930→        drawingsRef.current = [...drawingsRef.current, { id: `d${Date.now()}_${drawId}`, type: t as DrawType, points: [ms.pending, anchor] }]
+   931→        saveDrawings(chartKey, drawingsRef.current)
+   932→      }
+   933→      ms.mode = 'idle'
+   934→      ms.pending = undefined
+   935→      onToolDone?.()
+   936→    } else {
+   937→      ms.mode = 'draw2'
+   938→      ms.pending = anchor
+   939→    }
+   940→    redraw()
+   941→  }
+   942→
+   943→  const onMouseUp = () => {
+   944→    const ms = mouseRef.current
+   945→    // линейка колёсиком выключается на window.mouseup — отпустил, она исчезла
+   946→    if (ms.mode === 'pan' || ms.mode === 'drag') {
+   947→      ms.mode = 'idle'
+   948→      ms.grab = undefined
+   949→      const cv = canvasRef.current
+   950→      if (cv) cv.style.cursor = 'crosshair'
+   951→    }
+   952→    redraw()
+   953→  }
+   954→
+   955→  const onWheelNative = useCallback((e: WheelEvent) => {
+   956→    if (!interactive) return
+   957→    e.preventDefault()
+   958→    const sc = computeScale()
+   959→    if (!sc) return
+   960→    const cv = canvasRef.current
+   961→    if (!cv) return
+   962→    const r = cv.getBoundingClientRect()
+   963→    const px = e.clientX - r.left
+   964→    const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15
+   965→    const view = viewRef.current
+   966→    const newBars = clamp(view.bars * factor, 15, Math.max(60, sc.len + 40))
+   967→    // якорь: индекс под курсором остаётся на месте
+   968→    const anchorIdx = sc.startIdx + ((px - sc.padL) / sc.plotW) * view.bars
+   969→    const newRight = anchorIdx + (1 - (px - sc.padL) / sc.plotW) * newBars
+   970→    view.bars = newBars
+   971→    view.offset = sc.len - newRight
+   972→    redrawRef.current()
+   973→  }, [computeScale, interactive])
+   974→
+   975→  // нативный non-passive wheel: зум колесом без прокрутки страницы
+   976→  useEffect(() => {
+   977→    const cv = canvasRef.current
+   978→    if (!cv) return
+   979→    cv.addEventListener('wheel', onWheelNative, { passive: false })
+   980→    return () => cv.removeEventListener('wheel', onWheelNative)
+   981→  }, [onWheelNative])
+   982→
+   983→  const onDoubleClick = () => {
+   984→    viewRef.current = { bars: 130, offset: 0, pRange: null }
+   985→    redraw()
+   986→  }
+   987→
+   988→  const onLeave = () => {
+   989→    const ms = mouseRef.current
+   990→    ms.inside = false
+   991→    if (ms.mode === 'pan' || ms.mode === 'drag') {
+   992→      ms.mode = 'idle'
+   993→      ms.grab = undefined
+   994→      const cv = canvasRef.current
+   995→      if (cv) cv.style.cursor = 'crosshair'
+   996→    }
+   997→    // линейку колёсика не отменяем на выходе из канваса —
+   998→    // она выключится, когда колёсико будет отпущено (window mouseup)
+   999→    redraw()
+  1000→  }
+  1001→
+  1002→  return (
+  1003→    <div ref={wrapRef} className={cn('relative h-full w-full', className)}>
+  1004→      <canvas
+  1005→        ref={canvasRef}
+  1006→        className="absolute inset-0 h-full w-full"
+  1007→        style={{ touchAction: 'none' }}
+  1008→        onMouseMove={onMouseMove}
+  1009→        onMouseDown={onMouseDown}
+  1010→        onMouseUp={onMouseUp}
+  1011→        onMouseLeave={onLeave}
+  1012→        onDoubleClick={onDoubleClick}
+  1013→        onContextMenu={(e) => e.preventDefault()}
+  1014→      />
+  1015→    </div>
+  1016→  )
+  1017→}
+  1018→
