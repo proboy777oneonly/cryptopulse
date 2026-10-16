@@ -1,9 +1,67 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Check } from 'lucide-react'
 import { EX_MAP, type ExchangeId } from '@/engines/types'
 import { useLive } from '@/stores/live-store'
 import { cn } from '@/lib/utils'
+
+// ─── Тикер с копированием по клику ────────────────────────────────────
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch { /* fallthrough */ }
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    return ok
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Клик по тикеру — копирование в буфер обмена с короткой вспышкой «✓».
+ * inherits текущий шрифт/размер; выглядит как обычный текст.
+ */
+export function TickerCopy({ symbol, className, title }: { symbol: string; className?: string; title?: string }) {
+  const [copied, setCopied] = useState(false)
+  const t = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (t.current) clearTimeout(t.current) }, [])
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation()
+        void copyText(symbol).then((ok) => {
+          if (!ok) return
+          setCopied(true)
+          if (t.current) clearTimeout(t.current)
+          t.current = setTimeout(() => setCopied(false), 900)
+        })
+      }}
+      className={cn('cursor-copy select-text transition-colors', className)}
+      aria-label={title ?? `Копировать ${symbol}`}
+    >
+      {copied ? (
+        <span className="inline-flex items-center gap-1" style={{ color: 'var(--pos)' }}>
+          <Check className="h-3 w-3" strokeWidth={3} />
+          <span className="sr-only">скопировано</span>
+        </span>
+      ) : symbol}
+    </button>
+  )
+}
 
 // ─── Бейдж биржи ──────────────────────────────────────────────────────
 
@@ -96,18 +154,32 @@ export function FearGreedGauge({ value, size = 150 }: { value: number; size?: nu
     const y2 = cy + r * Math.sin(a2)
     return `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`
   }
+  // деления шкалы
+  const ticks = [0, 25, 50, 75, 100]
   return (
     <div className="relative flex flex-col items-center" style={{ width: size }}>
       <svg width={size} height={size * 0.62} viewBox={`0 0 ${size} ${size * 0.62}`}>
-        <path d={arcPath(0, 100)} fill="none" stroke="var(--muted)" strokeWidth="9" strokeLinecap="round" />
-        <path d={arcPath(0, 25)} fill="none" stroke="#f43f5e" strokeWidth="9" strokeLinecap="round" opacity="0.55" />
-        <path d={arcPath(25, 45)} fill="none" stroke="#fb923c" strokeWidth="9" strokeLinecap="round" opacity="0.55" />
-        <path d={arcPath(45, 55)} fill="none" stroke="#fbbf24" strokeWidth="9" strokeLinecap="round" opacity="0.55" />
-        <path d={arcPath(55, 75)} fill="none" stroke="#a3e635" strokeWidth="9" strokeLinecap="round" opacity="0.55" />
-        <path d={arcPath(75, 100)} fill="none" stroke="#34d399" strokeWidth="9" strokeLinecap="round" opacity="0.55" />
+        <path d={arcPath(0, 100)} fill="none" stroke="var(--muted)" strokeWidth="10" strokeLinecap="round" />
+        {/* активный сектор до текущего значения */}
+        <path d={arcPath(0, v)} fill="none" stroke={color} strokeWidth="10" strokeLinecap="round" opacity="0.9" style={{ filter: `drop-shadow(0 0 8px ${color}88)`, transition: 'd 0.8s' }} />
+        <path d={arcPath(0, 25)} fill="none" stroke="#f43f5e" strokeWidth="10" strokeLinecap="round" opacity="0.22" />
+        <path d={arcPath(25, 45)} fill="none" stroke="#fb923c" strokeWidth="10" strokeLinecap="round" opacity="0.22" />
+        <path d={arcPath(45, 55)} fill="none" stroke="#fbbf24" strokeWidth="10" strokeLinecap="round" opacity="0.22" />
+        <path d={arcPath(55, 75)} fill="none" stroke="#a3e635" strokeWidth="10" strokeLinecap="round" opacity="0.22" />
+        <path d={arcPath(75, 100)} fill="none" stroke="#34d399" strokeWidth="10" strokeLinecap="round" opacity="0.22" />
+        {/* деления */}
+        {ticks.map((t) => {
+          const a = Math.PI + (t / 100) * Math.PI
+          const x1 = cx + (r - 8) * Math.cos(a)
+          const y1 = cy + (r - 8) * Math.sin(a)
+          const x2 = cx + (r - 13) * Math.cos(a)
+          const y2 = cy + (r - 13) * Math.sin(a)
+          return <line key={t} x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--muted-foreground)" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" />
+        })}
         <g transform={`rotate(${angle} ${cx} ${cy})`} style={{ transition: 'transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
           <line x1={cx} y1={cy} x2={cx + r - 14} y2={cy} stroke={color} strokeWidth="3" strokeLinecap="round" style={{ filter: `drop-shadow(0 0 6px ${color})` }} />
           <circle cx={cx} cy={cy} r="5" fill={color} />
+          <circle cx={cx} cy={cy} r="8" fill="none" stroke={color} strokeWidth="1" opacity="0.4" />
         </g>
       </svg>
       <div className="-mt-2 flex flex-col items-center">

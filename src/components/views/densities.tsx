@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { motion } from 'framer-motion'
 import {
   Ban, Check, ChevronsUpDown, Coins, Layers, Loader2, Palette, Plus, Power, Search,
-  Send, Settings2, Timer, Hourglass, Trash2, Volume2, X,
+  Send, Settings2, Hourglass, Trash2, Volume2, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,14 +18,14 @@ import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '@
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import {
-  EX_MAP, DEFAULT_VOL_TIERS, fmtAge, fmtPrice, fmtTime, fmtUsd, volumeTierColor,
+  EX_MAP, DEFAULT_VOL_TIERS, fmtAge, fmtPrice, fmtUsd, volumeTierColor,
   type DensityEvent, type DensityWindowConfig, type ExchangeId, type MarketType, type SymbolRow, type VolumeTier,
 } from '@/engines/types'
 import { COIN_MAP } from '@/engines/coins'
 import { SOUNDS, soundEngine } from '@/engines/sound'
 import { toastSuccess } from '@/engines/notifier'
 import { getHub } from '@/engines/hub'
-import { EmptyState, useUptime } from '@/components/ui-bits'
+import { EmptyState, TickerCopy } from '@/components/ui-bits'
 import { cn } from '@/lib/utils'
 
 const LIFETIME_OPTIONS = [
@@ -346,14 +346,12 @@ function VolumeTiersSection({ win }: { win: DensityWindowConfig }) {
                     }}
                     className={cn('h-6 w-6 rounded-md border transition-transform hover:scale-110', t.color === c.value ? 'cp-glow-sm border-white/60' : 'border-transparent')}
                     style={{ background: c.value }}
-                    title={c.label}
                     aria-label={`Цвет порога: ${c.label}`}
                   />
                 ))}
                 <button
                   onClick={() => setTiers(tiers.filter((_, j) => j !== i))}
                   className="ml-1 flex h-6 w-6 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[color-mix(in_srgb,var(--destructive)_15%,transparent)] hover:text-[var(--destructive)]"
-                  title="Удалить порог"
                   aria-label="Удалить порог"
                 >
                   <Trash2 className="h-3 w-3" />
@@ -469,14 +467,14 @@ function TickersDialog({ win, open, onOpenChange }: { win: DensityWindowConfig; 
                   <button
                     onClick={() => { setSendSym(sym); setSendTargets({}) }}
                     className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--border)] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_50%,transparent)]"
-                    title="Отправить тикер в другие окна"
+                    aria-label="Отправить тикер в другие окна"
                   >
                     <Send className="h-3.5 w-3.5" style={{ color: 'var(--acc)' }} />
                   </button>
                   <button
                     onClick={() => removeTickerOverride(win.id, sym)}
                     className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--destructive)] transition-colors hover:border-[var(--destructive)]"
-                    title="Удалить тикер"
+                    aria-label="Удалить тикер"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -623,7 +621,6 @@ function DensityWindowCard({ win, compact }: { win: DensityWindowConfig; compact
   const removeDensityWindow = useApp((s) => s.removeDensityWindow)
   const densityWindows = useApp((s) => s.densityWindows)
   const events = useLive((s) => s.densityEvents[win.id] ?? EMPTY_EVENTS)
-  const tick = useLive((s) => s.tick)
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tickersOpen, setTickersOpen] = useState(false)
@@ -636,14 +633,13 @@ function DensityWindowCard({ win, compact }: { win: DensityWindowConfig; compact
     () => events.filter((e) => (win.mode === 'ALL' ? true : e.market === win.mode)).sort((a, b) => b.createdAt - a.createdAt),
     [events, win.mode],
   )
-  void tick
 
   const modeBtn = (m: 'ALL' | 'F' | 'S') => (
     <button
       key={m}
       onClick={() => setDensityMode(win.id, m)}
       className={cn(
-        'flex h-6 min-w-8 items-center justify-center rounded-md px-1.5 text-[10px] font-black transition-all',
+        'flex h-5 min-w-7 items-center justify-center rounded px-1 text-[9px] font-black transition-all',
         win.mode === m ? 'text-white' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
       )}
       style={win.mode === m ? { background: 'linear-gradient(135deg, var(--acc), var(--acc-2))', boxShadow: '0 0 12px -3px var(--glow)' } : undefined}
@@ -656,56 +652,57 @@ function DensityWindowCard({ win, compact }: { win: DensityWindowConfig; compact
   return (
     <div className="cp-border-glow flex flex-col rounded-2xl bg-card" style={{ borderTop: `2px solid ${meta.color}66` }}>
       {/* Заголовок окна */}
-      <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2.5">
+      <div className="flex items-center gap-1.5 border-b border-[var(--border)] px-2.5 py-2">
         <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: meta.color, boxShadow: `0 0 10px ${meta.color}` }} />
-        <span className="truncate text-sm font-black tracking-wide">{meta.name.toUpperCase()}</span>
-        <div className="flex items-center gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--muted)] p-0.5">
+        <span className="min-w-0 flex-1 truncate text-[13px] font-black tracking-wide">
+          {win.exchange === 'HL' ? 'HYPERLIQ' : meta.name.toUpperCase()}
+        </span>
+        <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--muted)] p-0.5">
           {modeBtn('ALL')}
           {modeBtn('F')}
           {modeBtn('S')}
         </div>
-        <span className="cp-num ml-auto rounded-md bg-[var(--muted)] px-2 py-0.5 text-[10px] font-bold" style={{ color: filtered.length > 0 ? meta.color : 'var(--muted-foreground)' }}>
+        <span className="cp-num shrink-0 rounded-md bg-[var(--muted)] px-1.5 py-0.5 text-[10px] font-bold" style={{ color: filtered.length > 0 ? meta.color : 'var(--muted-foreground)' }}>
           {filtered.length}
         </span>
-        <div className="flex items-center gap-0.5">
-          <button onClick={() => setTickersOpen(true)} title="Тикеры окна" aria-label="Тикеры окна" className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--acc)]">
-            <Coins className="h-3.5 w-3.5" />
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button onClick={() => setTickersOpen(true)} aria-label="Тикеры окна" className="flex h-6 w-6 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--acc)]">
+            <Coins className="h-3 w-3" />
           </button>
-          <button onClick={() => setBlacklistOpen(true)} title="Чёрный список" aria-label="Чёрный список" className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--destructive)]">
-            <Ban className="h-3.5 w-3.5" />
+          <button onClick={() => setBlacklistOpen(true)} aria-label="Чёрный список" className="flex h-6 w-6 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--destructive)]">
+            <Ban className="h-3 w-3" />
           </button>
-          <button onClick={() => setSettingsOpen(true)} title="Настройки окна" aria-label="Настройки окна" className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--acc)]">
-            <Settings2 className="h-3.5 w-3.5" />
+          <button onClick={() => setSettingsOpen(true)} aria-label="Настройки окна" className="flex h-6 w-6 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--acc)]">
+            <Settings2 className="h-3 w-3" />
           </button>
           <button
             onClick={() => updateDensityWindow(win.id, { enabled: !win.enabled })}
-            title={win.enabled ? 'Выключить окно' : 'Включить окно'}
             aria-label="Питание окна"
-            className={cn('flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-[var(--muted)]', win.enabled ? 'text-[var(--pos)]' : 'text-[var(--muted-foreground)]')}
+            className={cn('flex h-6 w-6 items-center justify-center rounded-lg transition-colors hover:bg-[var(--muted)]', win.enabled ? 'text-[var(--pos)]' : 'text-[var(--muted-foreground)]')}
           >
-            <Power className="h-3.5 w-3.5" />
+            <Power className="h-3 w-3" />
           </button>
           {densityWindows.length > 1 && (
-            <button onClick={() => removeDensityWindow(win.id)} title="Удалить окно" aria-label="Удалить окно" className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--destructive)]">
-              <X className="h-3.5 w-3.5" />
+            <button onClick={() => removeDensityWindow(win.id)} aria-label="Удалить окно" className="flex h-6 w-6 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--destructive)]">
+              <X className="h-3 w-3" />
             </button>
           )}
         </div>
       </div>
 
       {/* Таблица событий */}
-      <div className="flex-1 p-2">
+      <div className="flex-1 p-1.5">
         {!win.enabled ? (
           <EmptyState icon={<Power className="h-8 w-8" />} title="Окно отключено" hint="Включите окно, чтобы возобновить поток плотностей" />
         ) : filtered.length === 0 ? (
           <EmptyState icon={<Layers className="h-8 w-8" />} title="Нет плотностей по фильтрам" hint="Ждём крупные лимитные заявки, подходящие под ваши пороги…" />
         ) : (
           <div className="space-y-1">
-            {filtered.slice(0, 12).map((e) => (
+            {filtered.slice(0, 14).map((e) => (
               <DensityRow key={e.id} e={e} compact={compact} tiers={win.volTiers} onSend={() => { setSendFor(e.symbol); setSendTargets({}) }} />
             ))}
-            {filtered.length > 12 && (
-              <div className="py-1 text-center text-[10px] text-[var(--muted-foreground)]">+{filtered.length - 12} ещё — настройте фильтры точнее</div>
+            {filtered.length > 14 && (
+              <div className="py-1 text-center text-[10px] text-[var(--muted-foreground)]">+{filtered.length - 14} ещё</div>
             )}
           </div>
         )}
@@ -748,6 +745,9 @@ function DensityWindowCard({ win, compact }: { win: DensityWindowConfig; compact
 }
 
 function DensityRow({ e, compact, onSend, tiers }: { e: DensityEvent; compact: boolean; onSend: () => void; tiers: VolumeTier[] | undefined }) {
+  // подписка на тик — обновляет возраст только этой строки, без ререндера окна
+  const tick = useLive((s) => s.tick)
+  void tick
   const now = Date.now()
   const ageMs = Math.max(0, now - e.createdAt)
   const color = EX_MAP[e.exchange].color
@@ -758,10 +758,10 @@ function DensityRow({ e, compact, onSend, tiers }: { e: DensityEvent; compact: b
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0 }}
-      className={cn('group flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--muted)] px-2.5 transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]', compact ? 'py-1' : 'py-1.5')}
+      className={cn('group relative flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--muted)] px-2 transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]', compact ? 'py-1' : 'py-1.5')}
     >
       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
-      <span className="w-16 shrink-0 truncate text-xs font-black">{e.symbol}</span>
+      <TickerCopy symbol={e.symbol} className="w-[62px] shrink-0 truncate text-[11px] font-black" />
       <span
         className="shrink-0 rounded px-1 py-0.5 text-[8px] font-black"
         style={{ background: e.market === 'F' ? '#f59e0b1e' : '#22d3ee1e', color: e.market === 'F' ? '#f59e0b' : '#22d3ee' }}
@@ -769,31 +769,28 @@ function DensityRow({ e, compact, onSend, tiers }: { e: DensityEvent; compact: b
         {e.market}
       </span>
       <span
-        className="cp-num w-16 shrink-0 text-xs font-black"
+        className="cp-num w-[52px] shrink-0 text-[11px] font-black"
         style={volColor ? { color: volColor, textShadow: `0 0 14px ${volColor}66` } : undefined}
-        title={`Объём заявки ${fmtUsd(e.volumeUsd)}`}
       >
         {fmtUsd(e.volumeUsd)}
       </span>
-      <span className="cp-num w-11 shrink-0 text-right text-xs font-bold" style={{ color: 'var(--acc)' }}>{e.strengthPct.toFixed(2)}%</span>
-      <span className="cp-num hidden w-14 shrink-0 text-right text-[10px] text-[var(--muted-foreground)] lg:block" title={`Уровень ${fmtPrice(e.levelPrice)}`}>
+      <span className="cp-num w-[38px] shrink-0 text-right text-[11px] font-bold" style={{ color: 'var(--acc)' }}>{e.strengthPct.toFixed(2)}%</span>
+      <span className="cp-num hidden w-[54px] shrink-0 text-right text-[10px] text-[var(--muted-foreground)] 2xl:block">
         {fmtPrice(e.levelPrice)}
       </span>
-      <span className="w-12 shrink-0 text-right text-[10px] font-black" style={{ color: e.direction === 'LONG' ? 'var(--pos)' : 'var(--neg)' }}>
+      <span className="w-[38px] shrink-0 text-right text-[9px] font-black" style={{ color: e.direction === 'LONG' ? 'var(--pos)' : 'var(--neg)' }}>
         {e.direction}
       </span>
       <span
-        className="cp-num flex w-[52px] shrink-0 items-center justify-center gap-1 rounded-md bg-[color-mix(in_srgb,var(--pos)_10%,transparent)] px-1 py-0.5 text-[10px] font-bold"
+        className="cp-num flex w-[46px] shrink-0 items-center justify-center gap-0.5 rounded-md bg-[color-mix(in_srgb,var(--pos)_10%,transparent)] px-1 py-0.5 text-[10px] font-bold"
         style={{ color: 'var(--pos)' }}
-        title={`Стоит с ${fmtTime(e.createdAt)} · ${new Date(e.createdAt).toLocaleTimeString('ru-RU')}`}
       >
-        <Hourglass className="h-3 w-3" />{fmtAge(ageMs)}
+        <Hourglass className="h-2.5 w-2.5" />{fmtAge(ageMs)}
       </span>
       <button
         onClick={onSend}
-        className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-transparent text-[var(--muted-foreground)] opacity-0 transition-all group-hover:opacity-100 hover:border-[color-mix(in_srgb,var(--acc)_50%,transparent)] hover:text-[var(--acc)]"
-        title="Отправить тикер в другие окна"
-        aria-label="Отправить тикер"
+        className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--card-solid)] text-[var(--muted-foreground)] opacity-0 shadow-md transition-all group-hover:opacity-100 hover:text-[var(--acc)]"
+        aria-label="Отправить тикер в другие окна"
       >
         <Send className="h-3 w-3" />
       </button>
@@ -805,83 +802,16 @@ function DensityRow({ e, compact, onSend, tiers }: { e: DensityEvent; compact: b
 
 export function DensitiesView() {
   const densityWindows = useApp((s) => s.densityWindows)
-  const addDensityWindow = useApp((s) => s.addDensityWindow)
-  const sendAllTickers = useApp((s) => s.sendAllTickers)
   const compact = useApp((s) => s.effects.compact)
-  const densityEvents = useLive((s) => s.densityEvents)
-  const dataMode = useLive((s) => s.dataMode)
-  const uptime = useUptime()
-
-  const [addOpen, setAddOpen] = useState(false)
-  const [addEx, setAddEx] = useState('')
-
-  const totalActive = useMemo(
-    () => Object.values(densityEvents).reduce((acc, list) => acc + list.length, 0),
-    [densityEvents],
-  )
-  const unused = useMemo(
-    () => Object.values(EX_MAP).filter((e) => !densityWindows.some((w) => w.exchange === e.id)),
-    [densityWindows],
-  )
 
   return (
-    <div className="space-y-4">
-      {/* Тулбар */}
-      <div className="cp-border-glow flex flex-wrap items-center gap-2.5 rounded-2xl bg-card px-4 py-3">
-        <div className="flex items-center gap-2 text-sm font-black">
-          <Layers className="h-4 w-4" style={{ color: 'var(--acc)' }} />
-          {densityWindows.length} окон · 1 окно = 1 биржа
-        </div>
-        <div className="cp-num flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 py-1.5 text-xs">
-          <span className={cn('h-1.5 w-1.5 rounded-full', dataMode === 'live' && 'cp-pulse-dot')} style={{ background: dataMode === 'live' ? 'var(--pos)' : '#f59e0b' }} />
-          <span className="font-bold" style={{ color: 'var(--acc)' }}>{totalActive} активных</span>
-        </div>
-        <div className="cp-num flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 py-1.5 text-xs font-bold">
-          <Timer className="h-3.5 w-3.5 text-[var(--muted-foreground)]" /> {uptime}
-        </div>
-        <div className="ml-auto flex items-center gap-2">
-          <Button
-            variant="outline" size="sm"
-            onClick={() => {
-              densityWindows.forEach((w) => sendAllTickers(w.id))
-              toastSuccess('Синхронизация тикеров', 'Все тикеры отправлены во все окна')
-            }}
-            title="Каждое окно отправляет свои тикеры во все остальные"
-          >
-            <Send className="mr-1.5 h-3.5 w-3.5" /> Все тикеры → все окна
-          </Button>
-          <Button size="sm" disabled={unused.length === 0 || densityWindows.length >= 8} onClick={() => setAddOpen(true)}>
-            <Plus className="mr-1.5 h-4 w-4" /> Добавить окно
-          </Button>
-        </div>
-      </div>
-
-      {/* Сетка окон */}
-      <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+    <div>
+      {/* Сетка окон — тулбар живёт в шапке приложения; 4 окна в ряд на широких экранах */}
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {densityWindows.map((w) => (
           <DensityWindowCard key={w.id} win={w} compact={compact} />
         ))}
       </div>
-
-      {/* Диалог добавления окна */}
-      <Dialog open={addOpen} onOpenChange={(v) => { setAddOpen(v); if (!v) setAddEx('') }}>
-        <DialogContent className="max-w-xs rounded-3xl border-[var(--border)] bg-[var(--card-solid)]">
-          <DialogHeader><DialogTitle className="text-base">Новое окно плотностей</DialogTitle></DialogHeader>
-          <Select value={addEx} onValueChange={setAddEx}>
-            <SelectTrigger><SelectValue placeholder="Биржа" /></SelectTrigger>
-            <SelectContent>
-              {unused.map((e) => (
-                <SelectItem key={e.id} value={e.id}>
-                  <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full" style={{ background: e.color }} />{e.name}</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button disabled={!addEx} onClick={() => { addDensityWindow(addEx as ExchangeId); setAddOpen(false); setAddEx(''); toastSuccess('Окно создано', `${EX_MAP[addEx as ExchangeId].name} подключено`) }}>
-            <Plus className="mr-2 h-4 w-4" /> Создать окно
-          </Button>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

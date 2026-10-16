@@ -47,7 +47,7 @@ function Particles() {
       canvas.style.width = `${w}px`
       canvas.style.height = `${h}px`
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      const count = Math.min(170, Math.floor((w * h) / 12000))
+      const count = Math.min(120, Math.floor((w * h) / 18000))
       stars = Array.from({ length: count }, () => ({
         x: Math.random() * w,
         y: Math.random() * h,
@@ -59,7 +59,16 @@ function Particles() {
       }))
     }
 
-    const frame = () => {
+    // ограничение до ~30 кадров/с — в 2 раза меньше нагрузки при том же виде
+    const FRAME_MS = 1000 / 30
+    let lastFrame = 0
+    let running = true
+
+    const frame = (t: number) => {
+      if (!running) return
+      raf = requestAnimationFrame(frame)
+      if (t - lastFrame < FRAME_MS) return
+      lastFrame = t
       ctx.clearRect(0, 0, w, h)
       for (const s of stars) {
         s.a += s.da
@@ -90,13 +99,13 @@ function Particles() {
         ctx.stroke()
         if (sh.life <= 0 || sh.x > w + 60 || sh.y > h + 60) shoots.splice(i, 1)
       }
-      raf = requestAnimationFrame(frame)
     }
 
     resize()
     window.addEventListener('resize', resize)
     raf = requestAnimationFrame(frame)
     return () => {
+      running = false
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', resize)
     }

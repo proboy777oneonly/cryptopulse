@@ -141,15 +141,31 @@ export class NewsEngine {
 
 // ─── Fear & Greed ────────────────────────────────────────────────────
 
-export interface FgData { value: number; history: number[]; source: 'live' }
+export interface FgData {
+  value: number
+  history: number[]
+  source: 'live'
+  yesterday?: number
+  lastWeek?: number
+  lastMonth?: number
+}
 
 export async function fetchFearGreed(): Promise<FgData | null> {
   try {
-    const d = await jget('https://api.alternative.me/fng/?limit=30', 10_000)
+    // limit=40: хватает на 30 точек истории + вчерашний/недельный/месячный срезы
+    const d = await jget('https://api.alternative.me/fng/?limit=40', 10_000)
     const data = d?.data
     if (!Array.isArray(data) || data.length === 0) return null
     const hist = data.map((x: { value: string }) => Number(x.value)).reverse()
-    return { value: Math.round(hist[hist.length - 1]), history: hist, source: 'live' }
+    const val = (i: number) => (Number.isFinite(hist[hist.length - 1 - i]) ? hist[hist.length - 1 - i] : undefined)
+    return {
+      value: Math.round(hist[hist.length - 1]),
+      history: hist.slice(-30),
+      source: 'live',
+      yesterday: val(1),
+      lastWeek: val(7),
+      lastMonth: val(30),
+    }
   } catch {
     return null
   }

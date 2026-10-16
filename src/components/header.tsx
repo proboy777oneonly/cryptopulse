@@ -11,7 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useApp, type ViewId } from '@/stores/app-store'
 import { clearNotifications, markAllRead, resetLive, useLive } from '@/stores/live-store'
 import { toastSuccess } from '@/engines/notifier'
+import { DensityBody, MovementBody } from '@/engines/notifier'
 import { useUptime } from '@/components/ui-bits'
+import { ViewHeaderActions } from '@/components/header-actions'
 import { cn } from '@/lib/utils'
 import type { NotifType } from '@/engines/types'
 import { GeneratedAvatar, parseAvatarSpec } from '@/components/avatar'
@@ -177,14 +179,22 @@ export function NotificationBell() {
                     <span className="text-[9px] font-black uppercase tracking-wider" style={{ color: meta.color }}>{meta.label}</span>
                     {n.severity === 'critical' && <span className="rounded bg-[#f43f5e1a] px-1 text-[8px] font-black tracking-wider" style={{ color: '#f43f5e' }}>КРИТИЧНО</span>}
                     {n.severity === 'warning' && <span className="rounded bg-[#fbbf241a] px-1 text-[8px] font-black tracking-wider" style={{ color: '#fbbf24' }}>ВАЖНО</span>}
-                    <span className="cp-num ml-auto shrink-0 text-[10px] text-[var(--muted-foreground)]" title={new Date(n.time).toLocaleString('ru-RU')}>
+                    <span className="cp-num ml-auto shrink-0 text-[10px] text-[var(--muted-foreground)]">
                       {relTime(n.time)}
                     </span>
                   </span>
-                  <span className="mt-0.5 block text-[13px] font-bold leading-snug">{n.title}</span>
-                  <span className="mt-0.5 block text-xs leading-snug text-[var(--muted-foreground)]">
-                    <span className="line-clamp-2">{n.message}</span>
-                  </span>
+                  {n.type === 'density' && n.ticker ? (
+                    <span className="mt-0.5 block"><DensityBody n={n} /></span>
+                  ) : n.type === 'movement' && n.ticker ? (
+                    <span className="mt-0.5 block"><MovementBody n={n} /></span>
+                  ) : (
+                    <>
+                      <span className="mt-0.5 block text-[13px] font-bold leading-snug">{n.title}</span>
+                      <span className="mt-0.5 block text-xs leading-snug text-[var(--muted-foreground)]">
+                        <span className="line-clamp-2">{n.message}</span>
+                      </span>
+                    </>
+                  )}
                 </span>
                 {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--acc)', boxShadow: '0 0 8px var(--acc)' }} />}
               </button>
@@ -313,16 +323,18 @@ export function DashboardHeader({ title, subtitle }: { title: string; subtitle: 
   const live = dataMode === 'live'
   return (
     <header className="sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between gap-3 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--background)_82%,transparent)] px-4 backdrop-blur-xl sm:px-6">
-      <div className="min-w-0">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         {title && (
           <motion.h1 key={title} initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="truncate text-lg font-bold tracking-tight">
             {title}
           </motion.h1>
         )}
-        {title && subtitle && <div className="truncate text-xs text-[var(--muted-foreground)]">{subtitle}</div>}
+        {title && subtitle && <div className="hidden truncate text-xs text-[var(--muted-foreground)] xl:block">{subtitle}</div>}
+        {/* Действия активной вкладки — всегда сверху */}
+        <ViewHeaderActions />
       </div>
-      <div className="flex items-center gap-2 sm:gap-3">
-        <div className="hidden items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 py-2 sm:flex" title="Аптайм сессии движков">
+      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+        <div className="hidden items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 py-2 sm:flex">
           <span className={cn('h-1.5 w-1.5 rounded-full', running && live && 'cp-pulse-dot')} style={{ background: live ? 'var(--pos)' : '#f59e0b' }} />
           <span className="cp-num text-xs font-bold">{uptime}</span>
         </div>

@@ -219,14 +219,15 @@ export class BookEngine {
     setInterval(() => this.heartbeatWalls(), 10_000)
   }
 
-  /** Пере-отправка живых стен: молодые — каждые ~10с, старые — каждые ~30с */
+  /** Пере-отправка живых стен: молодые — каждые ~10с, старые — каждые ~30с;
+   *  заодно подчищаем исчезнувшие (не подтверждаемые) стены из состояния */
   private heartbeatWalls() {
     const now = Date.now()
     const emits: WallRow[] = []
     for (const [key, st] of this.walls.entries()) {
-      const age = now - st.firstSeen
       const alive = now - st.lastSeen < 45_000
-      if (!alive) continue
+      if (!alive) { this.walls.delete(key); continue }
+      const age = now - st.firstSeen
       const interval = age < 90_000 ? 11_000 : 31_000
       if (now - st.lastEmit < interval) continue
       const [ex, m, symbol, side, priceStr] = key.split('|')
@@ -368,8 +369,8 @@ export class BookEngine {
       }
     }
 
-    // подчистка исчезнувших стен
-    if (this.walls.size > 30_000) {
+    // подчистка исчезнувших стен (дополнительно к постоянной чистке в heartbeat)
+    if (this.walls.size > 12_000) {
       for (const [k, st] of [...this.walls.entries()]) {
         if (now - st.lastSeen > WALL_REAPPEAR_MS * 3) this.walls.delete(k)
       }

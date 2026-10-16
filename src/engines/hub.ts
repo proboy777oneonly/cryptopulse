@@ -5,7 +5,7 @@ import { emitNotification } from './notifier'
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import {
-  exName, fmtAge, fmtUsd, uid,
+  exName, fmtUsd, uid,
   type ConnectRow, type DensityEvent, type ExchangeId, type ListingEvent, type MarketType, type MovementAlert,
   type NewsItem, type ServiceStats, type SpreadRow, type SymbolRow, type TickerSnapshot,
 } from './types'
@@ -45,12 +45,14 @@ export interface WallRow {
 
 interface HelloPayload {
   service: { version: string; startedAt: number }
-  fg: { value: number; history: number[]; source: 'live' } | null
+  fg: FgPayload | null
   news: NewsItem[]
   listings?: ListingEvent[]
   top: { gainers: MoverRow[]; losers: MoverRow[] }
   symbols: number
 }
+
+type FgPayload = { value: number; history: number[]; source: 'live'; yesterday?: number; lastWeek?: number; lastMonth?: number }
 
 /** Время жизни события в окне после последнего подтверждения стены сервером */
 const WALL_EVENT_TTL_MS = 45_000
@@ -140,7 +142,7 @@ export class EngineHub {
     socket.on('hello', (d: HelloPayload) => {
       if (d.news?.length) useLive.setState({ news: d.news })
       if (d.listings?.length) useLive.setState({ listings: d.listings.slice(0, 120) })
-      if (d.fg) useLive.setState({ fearGreed: { value: d.fg.value, history: d.fg.history, source: 'live' } })
+      if (d.fg) useLive.setState({ fearGreed: { value: d.fg.value, history: d.fg.history, source: 'live', yesterday: d.fg.yesterday, lastWeek: d.fg.lastWeek, lastMonth: d.fg.lastMonth } })
       if (d.top) this.applyTop(d.top)
       if (d.news?.length) this.translateNews()
       if (this.tickCount === 0 && d.symbols > 0) {
@@ -156,8 +158,8 @@ export class EngineHub {
     socket.on('top', (d: { gainers: MoverRow[]; losers: MoverRow[] }) => this.applyTop(d))
     socket.on('walls', (rows: WallRow[]) => this.handleWalls(rows))
     socket.on('spreads', (d: { F: SpreadRow[]; S: SpreadRow[] }) => this.handleSpreads(d))
-    socket.on('fg', (d: { value: number; history: number[]; source: 'live' }) => {
-      useLive.setState({ fearGreed: { value: d.value, history: d.history, source: 'live' } })
+    socket.on('fg', (d: FgPayload) => {
+      useLive.setState({ fearGreed: { value: d.value, history: d.history, source: 'live', yesterday: d.yesterday, lastWeek: d.lastWeek, lastMonth: d.lastMonth } })
     })
     socket.on('news', (fresh: NewsItem[]) => this.handleNews(fresh))
     socket.on('listings:new', (fresh: ListingEvent[]) => this.handleListings(fresh))
@@ -314,8 +316,13 @@ export class EngineHub {
           emitNotification({
             type: 'movement',
             severity: Math.abs(change) >= 8 ? 'critical' : 'success',
-            title: `${row.symbol} ${change > 0 ? '▲' : '▼'} ${Math.abs(change).toFixed(2)}% · ${exName(row.ex)}`,
-            message: `Движение ${win.period} от открытия свечи · цена ${row.price < 0.01 ? row.price.toExponential(2) : row.price.toFixed(4)} · объём 24ч ${fmtUsd(row.vol24h)}`,
+            title: `${row.symbol} ${change > 0 ? '▲' : '▼'} ${Math.abs(change).toFixed(2)}%`,
+            message: `${exName(row.ex)} ${row.m === 'F' ? 'фьючерсы' : 'спот'} · оборот 24ч ${fmtUsd(row.vol24h)}`,
+            ticker: row.symbol,
+            changePct: Math.round(change * 100) / 100,
+            exchange: row.ex,
+            market: row.m,
+            vol24h: row.vol24h,
             windowId: win.id,
             voiceText: voiceTextMovement(row.symbol, change, exName(row.ex)),
           })
@@ -405,8 +412,15 @@ export class EngineHub {
         emitNotification({
           type: 'density',
           severity,
-          title: `${w.symbol} · ${fmtUsd(w.notionalUsd)} · ${event.direction}`,
-          message: `Стоит ${fmtAge(ageMs)} · плотность ${w.side === 'BID' ? 'покупателей' : 'продавцов'} на ${w.distPct.toFixed(2)}% от цены · ${exName(w.ex)} ${w.m === 'F' ? 'фьючерс' : 'спот'} · объём 24ч ${fmtUsd(w.vol24h)}`,
+          title: `${w.symbol} · ${fmtUsd(w.notionalUsd)} · ${w.distPct.toFixed(2)}%`,
+          message: `${exName(w.ex)} ${w.m === 'F' ? 'фьючерсы' : 'спот'} · оборот 24ч ${fmtUsd(w.vol24h)}`,
+          ticker: w.symbol,
+          volumeUsd: w.notionalUsd,
+          distPct: Math.round(w.distPct * 100) / 100,
+          direction: event.direction,
+          exchange: w.ex,
+          market: w.m,
+          vol24h: w.vol24h,
           windowId: win.id,
           soundId: settings.soundId,
           volumePct: settings.volumePct,
@@ -425,8 +439,15 @@ export class EngineHub {
     const now = Date.now()
     const seen = new Set<string>()
     const active = new Map<string, ArbKeyState>()
+    // индекс «символ_биржа» → цена (вместо O(n²) поиска по массиву на каждую строку)
+    const rows = data[cfg.mode] ?? []
+    const rowBySym = new Map<string, number>()
+    for (const r of rows) {
+      rowBySym.set(`${r.symbol}_${r.buyEx}`, r.buyPrice)
+      rowBySym.set(`${r.symbol}_${r.sellEx}`, r.sellPrice)
+    }
 
-    for (const r of data[cfg.mode] ?? []) {
+    for (const r of rows) {
       if (!cfg.exchanges[r.buyEx] || !cfg.exchanges[r.sellEx]) continue
       if (r.spreadPct < cfg.minSpreadPct || r.vol24h < cfg.minVol24h) continue
       const key = `${r.symbol}_${r.buyEx}_${r.sellEx}`
@@ -449,7 +470,11 @@ export class EngineHub {
           type: 'arbitrage',
           severity: r.spreadPct >= 1.5 ? 'warning' : 'info',
           title: `${r.symbol} · спред ${r.spreadPct.toFixed(2)}%`,
-          message: `Покупка ${exName(r.buyEx)} → продажа ${exName(r.sellEx)} · объём 24ч ${fmtUsd(r.vol24h)}`,
+          message: `Покупка ${exName(r.buyEx)} → продажа ${exName(r.sellEx)} · оборот 24ч ${fmtUsd(r.vol24h)}`,
+          ticker: r.symbol,
+          spreadPct: r.spreadPct,
+          exchange: r.buyEx,
+          vol24h: r.vol24h,
           voiceText: voiceTextArbitrage(r.symbol, r.spreadPct),
         })
       }
@@ -469,9 +494,9 @@ export class EngineHub {
         symbol: o.symbol,
         market: cfg.mode,
         buyExchange: o.buyExchange,
-        buyPrice: (data[cfg.mode] ?? []).find((r) => r.symbol === o.symbol && r.buyEx === o.buyExchange)?.buyPrice ?? 0,
+        buyPrice: rowBySym.get(`${o.symbol}_${o.buyExchange}`) ?? 0,
         sellExchange: o.sellExchange,
-        sellPrice: (data[cfg.mode] ?? []).find((r) => r.symbol === o.symbol && r.sellEx === o.sellExchange)?.sellPrice ?? 0,
+        sellPrice: rowBySym.get(`${o.symbol}_${o.sellExchange}`) ?? 0,
         spreadPct: o.spreadPct,
         vol24h: o.vol24h,
         time: o.time,

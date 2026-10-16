@@ -6,7 +6,7 @@ import { ArrowDownRight, ArrowUpRight, Bell, Clock, Flame, Gauge, Layers, Newspa
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import { EX_MAP, FG_LABEL, fmtTime, fmtUsd, type TickerSnapshot } from '@/engines/types'
-import { AnimatedNumber, EmptyState, ExBadge, FearGreedGauge, Pct, SlideBar, Sparkline, StatCard, useUptime } from '@/components/ui-bits'
+import { AnimatedNumber, EmptyState, ExBadge, FearGreedGauge, Pct, SlideBar, Sparkline, StatCard, TickerCopy, useUptime } from '@/components/ui-bits'
 
 export function HomeView() {
   const setView = useApp((s) => s.setView)
@@ -79,13 +79,45 @@ export function HomeView() {
               {fearGreed.source === 'live' ? 'LIVE' : 'DEMO'}
             </span>
           </div>
-          <div className="mt-4 flex flex-col items-center">
-            <FearGreedGauge value={fearGreed.value} size={190} />
-            <div className="mt-2 text-sm font-bold" style={{ color: fearGreed.value <= 24 ? '#f43f5e' : fearGreed.value <= 44 ? '#fb923c' : fearGreed.value <= 55 ? '#fbbf24' : fearGreed.value <= 74 ? '#a3e635' : '#34d399' }}>
-              {FG_LABEL(fearGreed.value)}
+          <div className="mt-3 flex flex-col items-center">
+            <FearGreedGauge value={fearGreed.value} size={180} />
+            <div className="mt-1.5 flex items-center gap-2">
+              <span className="text-[15px] font-black" style={{ color: fearGreed.value <= 24 ? '#f43f5e' : fearGreed.value <= 44 ? '#fb923c' : fearGreed.value <= 55 ? '#fbbf24' : fearGreed.value <= 74 ? '#a3e635' : '#34d399' }}>
+                {FG_LABEL(fearGreed.value)}
+              </span>
+              {fearGreed.yesterday !== undefined && (
+                <span
+                  className="cp-num flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] font-black"
+                  style={{
+                    background: fearGreed.value >= fearGreed.yesterday ? 'color-mix(in srgb, var(--pos) 12%, transparent)' : 'color-mix(in srgb, var(--neg) 12%, transparent)',
+                    color: fearGreed.value >= fearGreed.yesterday ? 'var(--pos)' : 'var(--neg)',
+                  }}
+                >
+                  {fearGreed.value >= fearGreed.yesterday ? '▲' : '▼'}
+                  {Math.abs(fearGreed.value - fearGreed.yesterday)} за сутки
+                </span>
+              )}
             </div>
-            <Sparkline data={fearGreed.history} width={220} height={36} className="mt-3" positive={fearGreed.history[fearGreed.history.length - 1] >= (fearGreed.history[0] ?? 0)} />
-            <div className="mt-1 text-[10px] text-[var(--muted-foreground)]">динамика за 30 периодов</div>
+            <Sparkline data={fearGreed.history} width={230} height={40} className="mt-3" positive={fearGreed.history[fearGreed.history.length - 1] >= (fearGreed.history[0] ?? 0)} />
+            <div className="mt-1 text-[10px] text-[var(--muted-foreground)]">динамика за 30 дней</div>
+          </div>
+          {/* Срезы: вчера / неделя / месяц */}
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            {([
+              { label: 'Вчера', v: fearGreed.yesterday },
+              { label: 'Неделю назад', v: fearGreed.lastWeek },
+              { label: 'Месяц назад', v: fearGreed.lastMonth },
+            ] as const).map((row) => (
+              <div key={row.label} className="rounded-xl border border-[var(--border)] bg-[var(--muted)] px-2 py-2 text-center">
+                <div className="text-[9px] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">{row.label}</div>
+                <div
+                  className="cp-num mt-0.5 text-lg font-black"
+                  style={{ color: row.v === undefined ? 'var(--muted-foreground)' : row.v <= 24 ? '#f43f5e' : row.v <= 44 ? '#fb923c' : row.v <= 55 ? '#fbbf24' : row.v <= 74 ? '#a3e635' : '#34d399' }}
+                >
+                  {row.v ?? '—'}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -100,7 +132,7 @@ export function HomeView() {
               <motion.div key={t.symbol} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }} className="group">
                 <div className="flex items-center gap-2 text-xs">
                   <span className="cp-num w-4 text-[10px] font-bold text-[var(--muted-foreground)]">{i + 1}</span>
-                  <span className="w-14 truncate font-bold">{t.symbol}</span>
+                  <TickerCopy symbol={t.symbol} className="w-14 shrink-0 truncate font-bold" />
                   <ExBadge ex={t.exchange} size="sm" />
                   <span className="cp-num ml-auto text-[10px] text-[var(--muted-foreground)]">{fmtUsd(t.vol24h)}</span>
                   <Pct v={t.change24hPct} bold className="w-16 text-right" />
@@ -124,7 +156,7 @@ export function HomeView() {
               <motion.div key={t.symbol} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}>
                 <div className="flex items-center gap-2 text-xs">
                   <span className="cp-num w-4 text-[10px] font-bold text-[var(--muted-foreground)]">{i + 1}</span>
-                  <span className="w-14 truncate font-bold">{t.symbol}</span>
+                  <TickerCopy symbol={t.symbol} className="w-14 shrink-0 truncate font-bold" />
                   <ExBadge ex={t.exchange} size="sm" />
                   <span className="cp-num ml-auto text-[10px] text-[var(--muted-foreground)]">{fmtUsd(t.vol24h)}</span>
                   <Pct v={t.change24hPct} bold className="w-16 text-right" />

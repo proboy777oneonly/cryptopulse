@@ -3,11 +3,12 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  AlertTriangle, Bell, CheckCheck, Cpu, ExternalLink, Gauge, Languages, Layers, ListPlus, Loader2, Newspaper, Search, Trash2, TrendingUp,
+  ArrowUpDown, Bell, Cpu, ExternalLink, Layers, ListPlus, Loader2, Newspaper, TrendingUp,
 } from 'lucide-react'
-import { Input } from '@/components/ui/input'
-import { clearNotifications, markAllRead, markRead, useLive } from '@/stores/live-store'
-import { fmtTimeSec, type NewsCategory, type NewsImpact, type NotifType } from '@/engines/types'
+import { markRead, useLive } from '@/stores/live-store'
+import { useUi } from '@/stores/ui-store'
+import { DensityBody, MovementBody } from '@/engines/notifier'
+import { type NewsCategory, type NewsImpact, type NotifType } from '@/engines/types'
 import { EmptyState } from '@/components/ui-bits'
 import { cn } from '@/lib/utils'
 
@@ -31,68 +32,28 @@ function timeAgo(t: number): string {
 
 export function NewsView() {
   const news = useLive((s) => s.news)
+  const { newsQuery, newsOnlyHigh, newsLang } = useUi()
   const [cat, setCat] = useState<(typeof CATEGORIES)[number]>('Все')
-  const [query, setQuery] = useState('')
-  const [onlyHigh, setOnlyHigh] = useState(false)
-  const [lang, setLang] = useState<'ru' | 'en'>('ru')
 
-  const titleOf = (n: (typeof news)[number]) => (lang === 'ru' ? n.titleRu ?? n.title : n.title)
-  const summaryOf = (n: (typeof news)[number]) => (lang === 'ru' ? n.summaryRu ?? n.summary : n.summary)
+  const titleOf = (n: (typeof news)[number]) => (newsLang === 'ru' ? n.titleRu ?? n.title : n.title)
+  const summaryOf = (n: (typeof news)[number]) => (newsLang === 'ru' ? n.summaryRu ?? n.summary : n.summary)
 
   const filtered = useMemo(
     () => news.filter((n) =>
       (cat === 'Все' || n.category === cat)
-      && (!onlyHigh || n.impact === 'high')
-      && (query === '' || n.title.toLowerCase().includes(query.toLowerCase()) || n.summary.toLowerCase().includes(query.toLowerCase()) || (n.titleRu ?? '').toLowerCase().includes(query.toLowerCase())),
+      && (!newsOnlyHigh || n.impact === 'high')
+      && (newsQuery === '' || n.title.toLowerCase().includes(newsQuery.toLowerCase()) || n.summary.toLowerCase().includes(newsQuery.toLowerCase()) || (n.titleRu ?? '').toLowerCase().includes(newsQuery.toLowerCase())),
     ),
-    [news, cat, query, onlyHigh],
+    [news, cat, newsQuery, newsOnlyHigh],
   )
 
   const highCount = news.filter((n) => n.impact === 'high').length
   const translatedCount = news.filter((n) => n.titleRu).length
-  const translating = lang === 'ru' && translatedCount < Math.min(news.length, 24) && news.length > 0
+  const translating = newsLang === 'ru' && translatedCount < Math.min(news.length, 24) && news.length > 0
 
   return (
     <div className="space-y-4">
-      {/* Тулбар сверху — лента с поиском */}
-      <div className="cp-border-glow flex flex-wrap items-center gap-2 rounded-2xl bg-card px-4 py-3">
-        <Newspaper className="h-4 w-4" style={{ color: 'var(--acc)' }} />
-        <span className="text-sm font-black">Лента новостей</span>
-        <span className="cp-num rounded-md border border-[color-mix(in_srgb,#f43f5e_35%,transparent)] bg-[color-mix(in_srgb,#f43f5e_8%,transparent)] px-2 py-0.5 text-[10px] font-black" style={{ color: '#f43f5e' }}>
-          {highCount} важных
-        </span>
-        <button
-          onClick={() => setLang(lang === 'ru' ? 'en' : 'ru')}
-          className={cn(
-            'flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition-all',
-            lang === 'ru' ? 'text-white' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
-          )}
-          style={lang === 'ru'
-            ? { background: 'linear-gradient(135deg, var(--acc), var(--acc-2))', borderColor: 'transparent', boxShadow: '0 0 14px -4px var(--glow)' }
-            : { borderColor: 'var(--border)', background: 'var(--muted)' }}
-          aria-pressed={lang === 'ru'}
-          title="Переключить язык заголовков"
-        >
-          <Languages className="h-3.5 w-3.5" /> RU
-        </button>
-        <div className="relative ml-auto w-full sm:w-64">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Поиск по новостям…" className="h-9 pl-9 text-xs" />
-        </div>
-        <button
-          onClick={() => setOnlyHigh(!onlyHigh)}
-          className={cn(
-            'flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition-all',
-            onlyHigh ? 'text-white' : 'text-[var(--muted-foreground)]',
-          )}
-          style={onlyHigh ? { background: 'linear-gradient(135deg, #f43f5e, #e11d48)', borderColor: 'transparent' } : { borderColor: 'var(--border)', background: 'var(--muted)' }}
-          aria-pressed={onlyHigh}
-        >
-          <AlertTriangle className="h-3.5 w-3.5" /> Только важные
-        </button>
-      </div>
-
-      {/* Категории */}
+      {/* Категории — поиск/язык/важность живут в шапке приложения */}
       <div className="flex flex-wrap gap-1.5">
         {CATEGORIES.map((c) => (
           <button
@@ -110,6 +71,11 @@ export function NewsView() {
             {c}
           </button>
         ))}
+        {translating && (
+          <span className="ml-auto flex items-center gap-1.5 self-center text-[10px] text-[var(--muted-foreground)]">
+            <Loader2 className="h-3 w-3 animate-spin" /> переводим свежие заголовки…
+          </span>
+        )}
       </div>
 
       {/* Список */}
@@ -141,7 +107,7 @@ export function NewsView() {
                       {imp.label}
                     </span>
                     <span className="rounded-md border border-[var(--border)] bg-[var(--muted)] px-2 py-0.5 text-[9px] font-bold text-[var(--muted-foreground)]">{n.category}</span>
-                    {lang === 'ru' && !isRu && (
+                    {newsLang === 'ru' && !isRu && (
                       <span className="flex items-center gap-1 rounded-md bg-[var(--muted)] px-2 py-0.5 text-[9px] font-bold text-[var(--muted-foreground)]">
                         <Loader2 className="h-2.5 w-2.5 animate-spin" /> перевод…
                       </span>
@@ -152,7 +118,6 @@ export function NewsView() {
                       rel="noopener noreferrer"
                       className="ml-auto flex items-center gap-1 text-[10px] font-semibold transition-opacity hover:opacity-80"
                       style={{ color: 'var(--acc)' }}
-                      title="Открыть источник"
                     >
                       {timeAgo(n.time)} · {n.source} <ExternalLink className="h-3 w-3" />
                     </a>
@@ -175,12 +140,6 @@ export function NewsView() {
           </AnimatePresence>
         </div>
       )}
-
-      {translating && (
-        <p className="flex items-center justify-center gap-1.5 px-1 text-center text-[10px] text-[var(--muted-foreground)]">
-          <Loader2 className="h-3 w-3 animate-spin" /> переводим свежие заголовки на русский…
-        </p>
-      )}
     </div>
   )
 }
@@ -188,10 +147,10 @@ export function NewsView() {
 // ═══════════════════════════ УВЕДОМЛЕНИЯ (ЖУРНАЛ) ═══════════════════════════
 
 const NOTIF_META: Record<NotifType, { label: string; color: string; icon: typeof Bell }> = {
-  density: { label: 'Плотности', color: '#f59e0b', icon: Layers },
-  movement: { label: 'Движения', color: '#10b981', icon: TrendingUp },
-  arbitrage: { label: 'Арбитраж', color: '#22d3ee', icon: Gauge },
-  news: { label: 'Новости', color: '#f472b6', icon: Newspaper },
+  density: { label: 'Плотность', color: '#f59e0b', icon: Layers },
+  movement: { label: 'Движение', color: '#10b981', icon: TrendingUp },
+  arbitrage: { label: 'Арбитраж', color: '#22d3ee', icon: ArrowUpDown },
+  news: { label: 'Новость', color: '#f472b6', icon: Newspaper },
   listing: { label: 'Листинг', color: '#a3e635', icon: ListPlus },
   system: { label: 'Система', color: '#8b5cf6', icon: Cpu },
 }
@@ -217,17 +176,16 @@ function dayLabel(t: number): string {
 export function NotificationsView() {
   const notifications = useLive((s) => s.notifications)
   const unread = useLive((s) => s.unread)
+  const { notifQuery, notifOnlyUnread } = useUi()
   const [filter, setFilter] = useState<'all' | NotifType>('all')
-  const [query, setQuery] = useState('')
-  const [onlyUnread, setOnlyUnread] = useState(false)
 
   const filtered = useMemo(
     () => notifications.filter((n) =>
       (filter === 'all' || n.type === filter)
-      && (!onlyUnread || !n.read)
-      && (query === '' || n.title.toLowerCase().includes(query.toLowerCase()) || n.message.toLowerCase().includes(query.toLowerCase())),
+      && (!notifOnlyUnread || !n.read)
+      && (notifQuery === '' || n.title.toLowerCase().includes(notifQuery.toLowerCase()) || n.message.toLowerCase().includes(notifQuery.toLowerCase()) || (n.ticker ?? '').toLowerCase().includes(notifQuery.toLowerCase())),
     ),
-    [notifications, filter, query, onlyUnread],
+    [notifications, filter, notifQuery, notifOnlyUnread],
   )
 
   // группировка по дням
@@ -249,43 +207,7 @@ export function NotificationsView() {
 
   return (
     <div className="space-y-4">
-      <div className="cp-border-glow flex flex-wrap items-center gap-2 rounded-2xl bg-card px-4 py-3">
-        <Bell className="h-4 w-4" style={{ color: 'var(--acc)' }} />
-        <span className="text-sm font-bold">Журнал уведомлений</span>
-        <span className="cp-num rounded-md border px-2 py-0.5 text-[10px] font-black" style={{ borderColor: 'color-mix(in srgb, var(--acc) 35%, transparent)', background: 'color-mix(in srgb, var(--acc) 8%, transparent)', color: 'var(--acc)' }}>
-          {notifications.length} всего · {unread} новых
-        </span>
-        <div className="relative w-full sm:ml-auto sm:w-56">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Поиск по журналу…" className="h-9 pl-9 text-xs" />
-        </div>
-        <button
-          onClick={() => setOnlyUnread(!onlyUnread)}
-          className={cn(
-            'flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition-all',
-            onlyUnread ? 'text-white' : 'border-[var(--border)] bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
-          )}
-          style={onlyUnread ? { background: 'linear-gradient(135deg, var(--acc), var(--acc-2))', borderColor: 'transparent' } : undefined}
-          aria-pressed={onlyUnread}
-        >
-          <span className={cn('h-2 w-2 rounded-full', unread > 0 && 'animate-pulse')} style={{ background: unread > 0 ? 'var(--acc)' : 'var(--muted-foreground)' }} />
-          Непрочитанные
-        </button>
-        <button
-          onClick={markAllRead}
-          className="flex h-9 items-center gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 text-xs font-semibold transition-colors hover:text-[var(--acc)]"
-        >
-          <CheckCheck className="h-3.5 w-3.5" /> Прочитать все
-        </button>
-        <button
-          onClick={clearNotifications}
-          className="flex h-9 items-center gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 text-xs font-semibold text-[var(--muted-foreground)] transition-colors hover:text-[var(--destructive)]"
-        >
-          <Trash2 className="h-3.5 w-3.5" /> Очистить
-        </button>
-      </div>
-
-      {/* Фильтры по типу */}
+      {/* Фильтры по типу — поиск/кнопки живут в шапке приложения */}
       <div className="flex flex-wrap gap-1.5">
         <button
           onClick={() => setFilter('all')}
@@ -308,6 +230,11 @@ export function NotificationsView() {
             {NOTIF_META[t].label} ({counts[t] ?? 0})
           </button>
         ))}
+        {unread > 0 && (
+          <span className="cp-num ml-auto flex items-center gap-1.5 self-center rounded-full border border-[color-mix(in_srgb,var(--acc)_35%,transparent)] bg-[color-mix(in_srgb,var(--acc)_8%,transparent)] px-3 py-1 text-[10px] font-black" style={{ color: 'var(--acc)' }}>
+            {unread} непрочитанных
+          </span>
+        )}
       </div>
 
       {/* Список по дням */}
@@ -328,6 +255,7 @@ export function NotificationsView() {
                 {items.map((n) => {
                   const meta = NOTIF_META[n.type]
                   const Icon = meta.icon
+                  const structured = (n.type === 'density' || n.type === 'movement') && n.ticker
                   return (
                     <motion.button
                       key={n.id}
@@ -345,20 +273,22 @@ export function NotificationsView() {
                         <Icon className="h-4 w-4" strokeWidth={2.2} />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="flex flex-wrap items-baseline gap-x-2">
-                          <span className="truncate text-sm font-bold">{n.title}</span>
-                          <span className="cp-num ml-auto shrink-0 text-[10px] text-[var(--muted-foreground)]" title={fmtTimeSec(n.time)}>
-                            {relTimeShort(n.time)}
-                          </span>
-                        </span>
-                        <span className="mt-0.5 block text-xs leading-relaxed text-[var(--muted-foreground)]">{n.message}</span>
-                        <span className="mt-1.5 flex items-center gap-2">
-                          <span className="rounded-md px-1.5 py-0.5 text-[9px] font-black tracking-wider" style={{ background: `${meta.color}16`, color: meta.color }}>
-                            {meta.label.toUpperCase()}
-                          </span>
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="text-[9px] font-black uppercase tracking-wider" style={{ color: meta.color }}>{meta.label}</span>
                           {n.severity === 'critical' && <span className="rounded-md bg-[#f43f5e1a] px-1.5 py-0.5 text-[9px] font-black tracking-wider" style={{ color: '#f43f5e' }}>КРИТИЧНО</span>}
                           {n.severity === 'warning' && <span className="rounded-md bg-[#fbbf241a] px-1.5 py-0.5 text-[9px] font-black tracking-wider" style={{ color: '#fbbf24' }}>ВАЖНО</span>}
+                          <span className="cp-num ml-auto shrink-0 text-[10px] text-[var(--muted-foreground)]">{relTimeShort(n.time)}</span>
                         </span>
+                        {structured ? (
+                          <span className="mt-1 block">
+                            {n.type === 'density' ? <DensityBody n={n} large /> : <MovementBody n={n} large />}
+                          </span>
+                        ) : (
+                          <>
+                            <span className="mt-0.5 block text-sm font-bold leading-snug">{n.title}</span>
+                            <span className="mt-0.5 block text-xs leading-relaxed text-[var(--muted-foreground)]">{n.message}</span>
+                          </>
+                        )}
                       </span>
                       {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--acc)', boxShadow: '0 0 8px var(--acc)' }} />}
                     </motion.button>

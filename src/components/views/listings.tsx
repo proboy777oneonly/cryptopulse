@@ -3,10 +3,10 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  CalendarClock, ExternalLink, ListMinus, ListPlus, Radar, Radio, Search, Sparkles,
+  CalendarClock, ExternalLink, ListMinus, ListPlus, Radar, Radio, Sparkles,
 } from 'lucide-react'
-import { Input } from '@/components/ui/input'
 import { useLive } from '@/stores/live-store'
+import { useUi } from '@/stores/ui-store'
 import { EmptyState } from '@/components/ui-bits'
 import { cn } from '@/lib/utils'
 
@@ -32,10 +32,6 @@ function timeAgo(t: number): string {
   return `${Math.floor(diff / 86400)} дн назад`
 }
 
-function fmtDate(t: number): string {
-  return new Date(t).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
-}
-
 function Chip({ active, onClick, children, color }: { active: boolean; onClick: () => void; children: React.ReactNode; color?: string }) {
   return (
     <button
@@ -58,11 +54,11 @@ function Chip({ active, onClick, children, color }: { active: boolean; onClick: 
 
 export function ListingsView() {
   const listings = useLive((s) => s.listings)
+  const { listingsQuery } = useUi()
   const [kind, setKind] = useState<KindFilter>('all')
   const [ex, setEx] = useState<Ex3Id | 'ALL'>('ALL')
   const [mkt, setMkt] = useState<MktFilter>('ALL')
   const [src, setSrc] = useState<SrcFilter>('all')
-  const [query, setQuery] = useState('')
 
   const stats = useMemo(() => {
     const week = Date.now() - 7 * 86400_000
@@ -80,46 +76,16 @@ export function ListingsView() {
     && (ex === 'ALL' || l.exchange === ex)
     && (mkt === 'ALL' || l.market === mkt)
     && (src === 'all' || l.source === src)
-    && (query === ''
-      || l.title.toLowerCase().includes(query.toLowerCase())
-      || (l.symbols ?? []).some((s) => s.toLowerCase().includes(query.toLowerCase()))),
-  ), [listings, kind, ex, mkt, src, query])
+    && (listingsQuery === ''
+      || l.title.toLowerCase().includes(listingsQuery.toLowerCase())
+      || (l.symbols ?? []).some((s) => s.toLowerCase().includes(listingsQuery.toLowerCase()))),
+  ), [listings, kind, ex, mkt, src, listingsQuery])
 
   const toggleEx = (id: Ex3Id) => setEx((prev) => (prev === id ? 'ALL' : id))
 
   return (
     <div className="space-y-4">
-      {/* Тулбар: поиск + статистика в одном ряду */}
-      <div className="cp-border-glow flex flex-wrap items-center gap-2 rounded-2xl bg-card px-4 py-3">
-        <div className="relative w-full sm:w-60">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Поиск: SOL, Binance…" className="h-9 pl-9 text-xs" />
-        </div>
-        <div className="cp-num flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 py-1.5 text-[11px] font-bold text-[var(--muted-foreground)]">
-          <CalendarClock className="h-3.5 w-3.5" /> {stats.weekNew} за 7 дней
-        </div>
-        <div className="ml-auto flex items-center gap-1.5">
-          {EX3.map((e) => (
-            <button
-              key={e.id}
-              onClick={() => toggleEx(e.id)}
-              className={cn(
-                'flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold transition-all',
-                ex === e.id ? 'text-white' : 'border-[var(--border)] bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
-              )}
-              style={ex === e.id
-                ? { background: `linear-gradient(135deg, ${e.color}, color-mix(in srgb, ${e.color} 65%, #000))`, borderColor: 'transparent', boxShadow: `0 0 14px -4px ${e.color}` }
-                : undefined}
-              aria-pressed={ex === e.id}
-            >
-              <span className="h-1.5 w-1.5 rounded-full" style={{ background: e.color }} />
-              {e.name}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Статистика */}
+      {/* Статистика — поиск и счётчик «за 7 дней» живут в шапке приложения */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           { label: 'Листинги', value: stats.listing, icon: <ListPlus className="h-4 w-4" />, color: 'var(--pos)' },
@@ -136,8 +102,26 @@ export function ListingsView() {
         ))}
       </div>
 
-      {/* Фильтры */}
+      {/* Фильтры: биржи + тип + рынок + источник */}
       <div className="flex flex-wrap items-center gap-1.5">
+        {EX3.map((e) => (
+          <button
+            key={e.id}
+            onClick={() => toggleEx(e.id)}
+            className={cn(
+              'flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold transition-all',
+              ex === e.id ? 'text-white' : 'border-[var(--border)] bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]',
+            )}
+            style={ex === e.id
+              ? { background: `linear-gradient(135deg, ${e.color}, color-mix(in srgb, ${e.color} 65%, #000))`, borderColor: 'transparent', boxShadow: `0 0 14px -4px ${e.color}` }
+              : undefined}
+            aria-pressed={ex === e.id}
+          >
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: e.color }} />
+            {e.name}
+          </button>
+        ))}
+        <span className="mx-1 h-5 w-px bg-[var(--border)]" />
         <Chip active={kind === 'all'} onClick={() => setKind('all')}>Все</Chip>
         <Chip active={kind === 'listing'} onClick={() => setKind('listing')} color="#10b981">
           <ListPlus className="h-3.5 w-3.5" /> Листинги ({stats.listing})
@@ -211,7 +195,7 @@ export function ListingsView() {
                         <span className="cp-pulse-dot h-1.5 w-1.5 rounded-full" style={{ background: '#fbbf24' }} /> В ТОРГАХ
                       </span>
                     )}
-                    <span className="cp-num ml-auto shrink-0 text-[10px] text-[var(--muted-foreground)]" title={fmtDate(l.time)}>
+                    <span className="cp-num ml-auto shrink-0 text-[10px] text-[var(--muted-foreground)]">
                       {timeAgo(l.time)}
                     </span>
                   </div>

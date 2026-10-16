@@ -124,7 +124,7 @@ function withVolTiers(wins: DensityWindowConfig[]): DensityWindowConfig[] {
 function defaultMovementWindow(): MovementWindowConfig {
   return {
     id: uid('mov'),
-    name: 'Окно 1',
+    name: 'Движение 1',
     enabled: true,
     period: '1m',
     direction: 'both',
@@ -134,6 +134,11 @@ function defaultMovementWindow(): MovementWindowConfig {
     markets: { BINANCE_F: true, BINANCE_S: false, BYBIT_F: true, BYBIT_S: false, OKX_F: true, OKX_S: false },
     coinRules: [],
   }
+}
+
+/** Старые окна назывались «Окно N» — переименовываем в «Движение N» */
+function withMovementNames(wins: MovementWindowConfig[]): MovementWindowConfig[] {
+  return wins.map((w) => ({ ...w, name: w.name?.replace(/^Окно\s+/i, 'Движение ') ?? w.name }))
 }
 
 function defaultArbitrage(): ArbitrageConfig {
@@ -287,7 +292,7 @@ export const useApp = create<AppState>()(
         set({
           movementWindows: [
             ...wins,
-            { ...defaultMovementWindow(), name: `Окно ${wins.length + 1}`, id: uid('mov') },
+            { ...defaultMovementWindow(), name: `Движение ${wins.length + 1}`, id: uid('mov') },
           ],
         })
       },
@@ -313,7 +318,9 @@ export const useApp = create<AppState>()(
           densityWindows: Array.isArray(data.densityWindows) && data.densityWindows.length > 0
             ? withVolTiers(data.densityWindows as DensityWindowConfig[])
             : d.densityWindows,
-          movementWindows: Array.isArray(data.movementWindows) && data.movementWindows.length > 0 ? (data.movementWindows as MovementWindowConfig[]) : d.movementWindows,
+          movementWindows: Array.isArray(data.movementWindows) && data.movementWindows.length > 0
+            ? withMovementNames(data.movementWindows as MovementWindowConfig[])
+            : d.movementWindows,
           arbitrage: data.arbitrage ? { ...d.arbitrage, ...(data.arbitrage as ArbitrageConfig) } : d.arbitrage,
         })
       },
@@ -339,6 +346,9 @@ export const useApp = create<AppState>()(
           densityWindows: Array.isArray(p.densityWindows) && p.densityWindows.length > 0
             ? withVolTiers(p.densityWindows)
             : current.densityWindows,
+          movementWindows: Array.isArray(p.movementWindows) && p.movementWindows.length > 0
+            ? withMovementNames(p.movementWindows)
+            : current.movementWindows,
         }
       },
     },

@@ -233,6 +233,19 @@ export interface AppNotification {
   time: number
   windowId?: string
   read: boolean
+  /** Структурированные данные для плотных карточек (плотности/движения/арбитраж) */
+  ticker?: string
+  /** Дистанция до цены, % (плотности) */
+  distPct?: number
+  /** Размер заявки, USD (плотности) */
+  volumeUsd?: number
+  direction?: 'LONG' | 'SHORT'
+  changePct?: number
+  spreadPct?: number
+  exchange?: ExchangeId
+  market?: MarketType
+  /** Оборот тикера за 24ч */
+  vol24h?: number
 }
 
 // ─── Fear & Greed ─────────────────────────────────────────────────────
@@ -255,6 +268,9 @@ export interface FearGreed {
   value: number
   history: number[]
   source: 'live' | 'demo'
+  yesterday?: number
+  lastWeek?: number
+  lastMonth?: number
 }
 
 export const FG_LABEL = (v: number): string => {

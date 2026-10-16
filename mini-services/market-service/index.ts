@@ -68,32 +68,49 @@ newsEngine.onNews = (fresh: NewsItem[]) => {
 }
 
 listingsEngine.onListings = (fresh: ListingEvent[]) => {
-  io.emit('listings:new', fresh)
+  io.emit('listings:new', fresh.map(toClientListing))
+}
+
+/** Сервер хранит ex/m — клиент ожидает exchange/market (единый формат) */
+function toClientListing(e: ListingEvent) {
+  return { ...e, exchange: e.ex, market: e.m }
 }
 
 // ─── Трансляции ──────────────────────────────────────────────────────
 
-// movers — каждые 3 секунды пакетом
+/** Есть ли подключённые клиенты — без них тяжёлые расчёты и эмиты не нужны */
+function hasClients(): boolean {
+  return io.engine.clientsCount > 0
+}
+
+// movers — каждые 3 секунды пакетом (дедуп по ключу: берём последнее состояние)
 setInterval(() => {
   if (state.moversQueue.length === 0) return
-  const batch = state.moversQueue.splice(0, 2000)
+  if (!hasClients()) { state.moversQueue.length = 0; return }
+  const byKey = new Map<string, MoverRow>()
+  for (const r of state.moversQueue) byKey.set(r.key, r)
+  const batch = [...byKey.values()].slice(0, 1200)
+  state.moversQueue.length = 0
   io.emit('movers', batch)
 }, 3000)
 
 // стены — каждые 4 секунды пакетом
 setInterval(() => {
   if (state.wallsQueue.length === 0) return
+  if (!hasClients()) { state.wallsQueue.length = 0; return }
   const batch = state.wallsQueue.splice(0, 500)
   io.emit('walls', batch)
 }, 4000)
 
 // топы 24ч — каждые 15 секунд
 setInterval(() => {
+  if (!hasClients()) return
   io.emit('top', tickerHub.topLists())
 }, 15_000)
 
 // спреды — каждые 6 секунд
 setInterval(() => {
+  if (!hasClients()) return
   const spreads = tickerHub.spreads()
   state.spreads = spreads.F.length + spreads.S.length
   io.emit('spreads', spreads)
@@ -113,12 +130,15 @@ setInterval(() => {
   const hh = hlWs.health('F')
   bookEngine.wsHealth.set('HL_F', { status: hh.status, booksLive: hh.booksLive, booksTotal: bookEngine.getWatch('HL', 'F').length, msgsPerSec: Math.max(0, Math.round((hh.msgs - prevHlMsgs) / 5)), lastMsg: hh.lastMsg })
   prevHlMsgs = hh.msgs
-  const rows: ConnectRow[] = bookEngine.connectRows()
-  io.emit('connects', rows)
+  if (hasClients()) {
+    const rows: ConnectRow[] = bookEngine.connectRows()
+    io.emit('connects', rows)
+  }
 }, 5000)
 
 // телеметрия — каждые 5 секунд
 setInterval(() => {
+  if (!hasClients()) return
   const stats: ServiceStats = collectStats({
     ticks: state.ticks,
     walls: state.walls,
@@ -149,10 +169,10 @@ io.on('connection', (socket) => {
   console.log(`[WS+] client ${socket.id}, total ${io.engine.clientsCount}`)
 
   socket.emit('hello', {
-    service: { version: '3.1.0', startedAt: state.startedAt },
+    service: { version: '3.3.0', startedAt: state.startedAt },
     fg: state.fg,
     news: newsEngine.items,
-    listings: listingsEngine.items,
+    listings: listingsEngine.items.map(toClientListing),
     top: tickerHub.topLists(),
     symbols: tickerHub.symbolsCount(),
   })
@@ -178,7 +198,7 @@ io.on('connection', (socket) => {
 
 async function main() {
   console.log('════════════════════════════════════════════════')
-  console.log('  CryptoPulse Market Service v3.1.0')
+  console.log('  CryptoPulse Market Service v3.3.0')
   console.log(`  port ${PORT} · 8 exchanges · F+S · real data · listings`)
   console.log('════════════════════════════════════════════════')
 

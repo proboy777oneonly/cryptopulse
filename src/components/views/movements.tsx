@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
+  Button } from '@/components/ui/button'
+import {
   ChartCandlestick, GripHorizontal, Plus, Power, Settings2, Trash2, TrendingUp, X,
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -15,6 +16,7 @@ import { useApp } from '@/stores/app-store'
 import { clearMovementAlerts, useLive } from '@/stores/live-store'
 import { EX_MAP, fmtPrice, fmtTimeSec, fmtUsd, type MovementAlert, type MovementWindowConfig } from '@/engines/types'
 import { toastSuccess } from '@/engines/notifier'
+import { TickerCopy } from '@/components/ui-bits'
 import { EmptyState } from '@/components/ui-bits'
 import { cn } from '@/lib/utils'
 
@@ -215,7 +217,7 @@ function MovementSettingsDialog({ win, open, onOpenChange }: { win: MovementWind
 
           {/* Питание */}
           <div className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2.5">
-            <span className="text-xs font-semibold">Окно активно</span>
+            <span className="text-xs font-semibold">Движение активно</span>
             <Switch checked={win.enabled} onCheckedChange={(v) => set({ enabled: v })} aria-label="Включить окно" />
           </div>
         </div>
@@ -241,18 +243,17 @@ function MovementAlertRow({ a }: { a: MovementAlert }) {
       <span
         className="cp-num flex h-7 w-[74px] shrink-0 items-center justify-center rounded-lg bg-[var(--card)] text-[11px] font-bold text-[var(--foreground)]"
         style={{ boxShadow: 'inset 0 0 0 1px var(--border)' }}
-        title={new Date(a.time).toLocaleString('ru-RU')}
       >
         {fmtTimeSec(a.time)}
       </span>
-      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color, boxShadow: `0 0 8px ${color}88` }} title={EX_MAP[a.exchange].name} />
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color, boxShadow: `0 0 8px ${color}88` }} />
       <span
         className="shrink-0 rounded px-1 py-0.5 text-[8px] font-black"
         style={{ background: a.market === 'F' ? '#f59e0b1e' : '#22d3ee1e', color: a.market === 'F' ? '#f59e0b' : '#22d3ee' }}
       >
         {a.market}
       </span>
-      <span className="w-[86px] shrink-0 truncate text-[13px] font-black">{a.symbol}</span>
+      <TickerCopy symbol={a.symbol} className="w-[86px] shrink-0 truncate text-[13px] font-black" />
       <span className="cp-num w-[74px] shrink-0 text-right text-[15px] font-black" style={{ color: up ? 'var(--pos)' : 'var(--neg)', textShadow: `0 0 16px ${up ? 'var(--pos)' : 'var(--neg)'}44` }}>
         {up ? '▲' : '▼'}{Math.abs(a.changePct).toFixed(1)}%
       </span>
@@ -339,10 +340,8 @@ function MovementWindowCard({ win, index, z, onFront, wide }: {
           'flex touch-none items-center gap-1.5 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--muted)_45%,transparent)] px-2.5 py-2',
           dragged ? 'cursor-grabbing' : 'cursor-grab',
         )}
-        title="Потяните за шапку, чтобы переместить окно · двойной клик — вернуть на место"
       >
         <GripHorizontal className={cn('h-4 w-4 shrink-0 transition-colors', dragged ? 'text-[var(--acc)]' : 'text-[var(--muted-foreground)]')} />
-        <ChartCandlestick className="h-4 w-4 shrink-0" style={{ color: win.enabled ? 'var(--pos)' : 'var(--muted-foreground)' }} />
         <span className="truncate text-[13px] font-black">
           {win.name.toUpperCase()}
         </span>
@@ -354,7 +353,6 @@ function MovementWindowCard({ win, index, z, onFront, wide }: {
         </span>
         <button
           onClick={() => setSettingsOpen(true)}
-          title="Настройки окна"
           aria-label="Настройки окна движений"
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--acc)]"
         >
@@ -363,7 +361,6 @@ function MovementWindowCard({ win, index, z, onFront, wide }: {
         <button
           onClick={() => updateMovementWindow(win.id, { enabled: !win.enabled })}
           className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-[var(--muted)]', win.enabled ? 'text-[var(--pos)]' : 'text-[var(--muted-foreground)]')}
-          title={win.enabled ? 'Остановить окно' : 'Запустить окно'}
           aria-label="Питание окна движений"
         >
           <Power className="h-3.5 w-3.5" />
@@ -372,12 +369,11 @@ function MovementWindowCard({ win, index, z, onFront, wide }: {
           onClick={() => { clearMovementAlerts(win.id); toastSuccess('Окно очищено', `${win.name}: лента сигналов сброшена`) }}
           disabled={alerts.length === 0}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--acc)] disabled:opacity-40 disabled:hover:bg-transparent"
-          title="Очистить окно (убрать сигналы)"
           aria-label="Очистить окно движений"
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
-        <button onClick={() => removeMovementWindow(win.id)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[color-mix(in_srgb,var(--destructive)_15%,transparent)] hover:text-[var(--destructive)]" title="Удалить окно" aria-label="Удалить окно движений">
+        <button onClick={() => removeMovementWindow(win.id)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[color-mix(in_srgb,var(--destructive)_15%,transparent)] hover:text-[var(--destructive)]" aria-label="Удалить окно движений">
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -431,7 +427,6 @@ function MovementWindowCard({ win, index, z, onFront, wide }: {
 
 export function MovementsView() {
   const movementWindows = useApp((s) => s.movementWindows)
-  const addMovementWindow = useApp((s) => s.addMovementWindow)
   const [wide, setWide] = useState(true)
   const [front, setFront] = useState<{ id: string; z: number } | null>(null)
   const frontZ = useRef(20)
@@ -459,34 +454,14 @@ export function MovementsView() {
     : undefined
 
   return (
-    <div className="space-y-3">
-      {/* Тулбар: создание окон */}
-      <div className="cp-border-glow flex flex-wrap items-center gap-2.5 rounded-2xl bg-card px-4 py-3">
-        <Button
-          className="h-10 rounded-xl px-5 text-sm"
-          disabled={movementWindows.length >= 6}
-          onClick={() => {
-            addMovementWindow()
-            toastSuccess('Окно создано', 'Потяните за шапку, чтобы переместить · шестерёнка — настройки')
-          }}
-        >
-          <Plus className="mr-1.5 h-4 w-4" /> Новое окно
-        </Button>
-        <span className="cp-num rounded-md border border-[var(--border)] bg-[var(--muted)] px-2.5 py-1.5 text-[11px] font-bold text-[var(--muted-foreground)]">
-          {movementWindows.length}/6 окон
-        </span>
-        <span className="ml-auto hidden text-[10px] text-[var(--muted-foreground)] lg:block">
-          перетаскивайте окна за шапку · двойной клик по шапке — на место
-        </span>
-      </div>
-
-      {/* Полотно */}
+    <div>
+      {/* Полотно — тулбар живёт в шапке приложения */}
       {movementWindows.length === 0 ? (
         <div className="cp-border-glow rounded-2xl bg-card">
           <EmptyState
             icon={<ChartCandlestick className="h-10 w-10" />}
             title="Нет окон движений"
-            hint="Создайте первое окно — каждое следит за своими биржами и порогами независимо"
+            hint="Создайте первое окно кнопкой «Новое окно» сверху — каждое следит за своими биржами и порогами независимо"
           />
         </div>
       ) : (

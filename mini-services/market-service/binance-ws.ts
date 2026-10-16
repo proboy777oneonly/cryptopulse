@@ -16,6 +16,12 @@ const WS_URL_SPOT = 'wss://stream.binance.com:9443/ws'
 const FUT_TICKER_LIMIT = 160
 /** сколько стаканов слушать depth-диффами */
 const DEPTH_LIMIT = 45
+/** скорость depth-потоков: медленнее = в разы меньше сообщений и JSON.parse
+ *  (фьючерсы: 100/250/500ms, спот: 100/1000ms) */
+const DEPTH_STREAM: Record<'F' | 'S', string> = {
+  F: '@depth@500ms',
+  S: '@depth@1000ms',
+}
 
 interface BookState {
   bids: Map<number, number>
@@ -172,11 +178,12 @@ export class BinanceWs {
     if (!ws || ws.readyState !== 1) return
     const want = this.booksEngine.getWatch('BINANCE', m).slice(0, DEPTH_LIMIT)
     const cur = m === 'F' ? this.futDepthSubs : this.spotSubs
+    const suffix = DEPTH_STREAM[m]
     const wantSet = new Set(want)
     const add: string[] = []
     const remove: string[] = []
-    for (const s of wantSet) if (!cur.has(s)) add.push(`${s.toLowerCase()}@depth@100ms`)
-    for (const s of cur) if (!wantSet.has(s)) remove.push(`${s.toLowerCase()}@depth@100ms`)
+    for (const s of wantSet) if (!cur.has(s)) add.push(`${s.toLowerCase()}${suffix}`)
+    for (const s of cur) if (!wantSet.has(s)) remove.push(`${s.toLowerCase()}${suffix}`)
     if (add.length > 0) ws.send(JSON.stringify({ method: 'SUBSCRIBE', params: add, id: Date.now() % 100000 }))
     if (remove.length > 0) ws.send(JSON.stringify({ method: 'UNSUBSCRIBE', params: remove, id: (Date.now() + 1) % 100000 }))
     if (m === 'F') this.futDepthSubs = wantSet

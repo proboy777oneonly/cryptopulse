@@ -1,13 +1,15 @@
 'use client'
 
 import { toast } from 'sonner'
-import { Activity, ArrowRight, ArrowUpDown, Layers, ListPlus, Newspaper, TrendingUp, X } from 'lucide-react'
+import { Activity, ArrowDown, ArrowRight, ArrowUpDown, ArrowUp, Layers, ListPlus, Newspaper, TrendingDown, TrendingUp, X } from 'lucide-react'
 import { useApp } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import { soundEngine } from './sound'
 import { voiceEngine } from './voice'
-import type { AppNotification, NotifSeverity, NotifType } from './types'
+import { EX_MAP, fmtUsd, type AppNotification, type NotifSeverity, type NotifType } from './types'
 import { uid } from './types'
+import { TickerCopy } from '@/components/ui-bits'
+import { cn } from '@/lib/utils'
 
 export interface EmitOptions {
   type: NotifType
@@ -19,6 +21,15 @@ export interface EmitOptions {
   volumePct?: number
   voice?: boolean
   voiceText?: string
+  ticker?: string
+  distPct?: number
+  volumeUsd?: number
+  direction?: 'LONG' | 'SHORT'
+  changePct?: number
+  spreadPct?: number
+  exchange?: AppNotification['exchange']
+  market?: AppNotification['market']
+  vol24h?: number
 }
 
 const SEV_STYLE: Record<NotifSeverity, { color: string; iconBg: string; label: string }> = {
@@ -37,6 +48,55 @@ const TYPE_META: Record<NotifType, { label: string; icon: typeof Layers }> = {
   system: { label: 'СИСТЕМА', icon: Activity },
 }
 
+/** Строка «тикер · размер · дистанция» + низ «бирза · объём 24ч» */
+export function DensityBody({ n, large }: { n: AppNotification; large?: boolean }) {
+  const short = n.direction === 'SHORT'
+  const dirColor = short ? 'var(--neg)' : 'var(--pos)'
+  const DirIcon = short ? TrendingDown : TrendingUp
+  return (
+    <div className="min-w-0 flex-1">
+      <div className="flex items-baseline gap-2">
+        <TickerCopy symbol={n.ticker ?? ''} className={large ? 'text-[17px] font-black tracking-tight' : 'text-[15px] font-black tracking-tight'} />
+        <span className={cn('cp-num font-black', large ? 'text-[17px]' : 'text-[15px]')} style={{ color: dirColor }}>{fmtUsd(n.volumeUsd ?? 0)}</span>
+        <span className={cn('cp-num font-bold', large ? 'text-[13px]' : 'text-[12px]')} style={{ color: 'var(--acc)' }}>{(n.distPct ?? 0).toFixed(2)}%</span>
+        <span
+          className="ml-auto flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[9px] font-black tracking-wider"
+          style={{ background: short ? 'color-mix(in srgb, var(--neg) 12%, transparent)' : 'color-mix(in srgb, var(--pos) 12%, transparent)', color: dirColor }}
+        >
+          <DirIcon className="h-3 w-3" /> {short ? 'SHORT' : 'LONG'}
+        </span>
+      </div>
+      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--muted-foreground)]">
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: n.exchange ? EX_MAP[n.exchange]?.color : undefined }} />
+        {n.exchange ? EX_MAP[n.exchange]?.name : ''} {n.market === 'F' ? 'фьючерсы' : 'спот'}
+        <span className="opacity-40">·</span>
+        <span className="cp-num">объём 24ч {fmtUsd(n.vol24h ?? 0)}</span>
+      </div>
+    </div>
+  )
+}
+
+export function MovementBody({ n, large }: { n: AppNotification; large?: boolean }) {
+  const up = (n.changePct ?? 0) >= 0
+  return (
+    <div className="min-w-0 flex-1">
+      <div className="flex items-baseline gap-2">
+        <TickerCopy symbol={n.ticker ?? ''} className={large ? 'text-[17px] font-black tracking-tight' : 'text-[15px] font-black tracking-tight'} />
+        <span className={cn('flex items-center gap-0.5 font-black', large ? 'text-[17px]' : 'text-[15px]')} style={{ color: up ? 'var(--pos)' : 'var(--neg)' }}>
+          {up ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
+          {Math.abs(n.changePct ?? 0).toFixed(2)}%
+        </span>
+      </div>
+      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--muted-foreground)]">
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: n.exchange ? EX_MAP[n.exchange]?.color : undefined }} />
+        {n.exchange ? EX_MAP[n.exchange]?.name : ''} {n.market === 'F' ? 'фьючерсы' : 'спот'}
+        <span className="opacity-40">·</span>
+        <span className="cp-num">объём 24ч {fmtUsd(n.vol24h ?? 0)}</span>
+      </div>
+    </div>
+  )
+}
+
 // Троттлинг тостов: не чаще 1 в 3 секунды на тип, чтобы не заливать экран
 const lastToastAt = new Map<NotifType, number>()
 const TOAST_THROTTLE_MS = 3000
@@ -53,7 +113,6 @@ function NotifToast({ n, toastId, dur }: { n: AppNotification; toastId: number |
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toast.dismiss(toastId) }}
       className="cp-toast group relative w-[356px] max-w-[92vw] cursor-pointer select-none overflow-hidden rounded-2xl border bg-[var(--card-solid)] shadow-2xl transition-all hover:scale-[1.015] hover:border-[color-mix(in_srgb,var(--acc)_40%,var(--border))] active:scale-[0.99]"
       style={{ borderColor: 'color-mix(in srgb, ' + sev.color + ' 30%, var(--border))', boxShadow: `0 18px 50px -18px ${sev.color}55, 0 8px 24px -12px rgba(0,0,0,0.6)` }}
-      title="Клик — закрыть · наведите курсор — таймер на паузе"
     >
       {/* левая полоса серьёзности */}
       <div className="absolute inset-y-0 left-0 w-[3px]" style={{ background: `linear-gradient(180deg, ${sev.color}, color-mix(in srgb, ${sev.color} 30%, transparent))` }} />
@@ -69,13 +128,23 @@ function NotifToast({ n, toastId, dur }: { n: AppNotification; toastId: number |
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-[9px] font-black tracking-[0.14em]" style={{ color: sev.color }}>{meta.label}</span>
-            <span className="rounded border border-[var(--border)] bg-[var(--muted)] px-1 py-px text-[8px] font-black tracking-wider text-[var(--muted-foreground)]">{sev.label}</span>
+            {(n.severity === 'critical' || n.severity === 'warning') && (
+              <span className="rounded border border-[var(--border)] bg-[var(--muted)] px-1 py-px text-[8px] font-black tracking-wider text-[var(--muted-foreground)]">{sev.label}</span>
+            )}
             <span className="cp-num ml-auto text-[10px] text-[var(--muted-foreground)]">
               {new Date(n.time).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </span>
           </div>
-          <div className="mt-1 break-words text-[13px] font-bold leading-snug text-[var(--foreground)]">{n.title}</div>
-          {n.message && <div className="mt-0.5 text-[11px] leading-snug text-[var(--muted-foreground)]">{n.message}</div>}
+          {n.type === 'density' && n.ticker ? (
+            <div className="mt-1"><DensityBody n={n} /></div>
+          ) : n.type === 'movement' && n.ticker ? (
+            <div className="mt-1"><MovementBody n={n} /></div>
+          ) : (
+            <>
+              <div className="mt-1 break-words text-[13px] font-bold leading-snug text-[var(--foreground)]">{n.title}</div>
+              {n.message && <div className="mt-0.5 text-[11px] leading-snug text-[var(--muted-foreground)]">{n.message}</div>}
+            </>
+          )}
         </div>
 
         <button
@@ -105,13 +174,23 @@ export function emitNotification(opts: EmitOptions) {
     time: Date.now(),
     windowId: opts.windowId,
     read: false,
+    ticker: opts.ticker,
+    distPct: opts.distPct,
+    volumeUsd: opts.volumeUsd,
+    direction: opts.direction,
+    changePct: opts.changePct,
+    spreadPct: opts.spreadPct,
+    exchange: opts.exchange,
+    market: opts.market,
+    vol24h: opts.vol24h,
   }
 
-  // ── Журнал
+  // ── Журнал (лимит 300 записей; unread не может превысить длину журнала)
   const live = useLive.getState()
+  const notifications = [n, ...live.notifications].slice(0, 300)
   useLive.setState({
-    notifications: [n, ...live.notifications].slice(0, 300),
-    unread: live.unread + 1,
+    notifications,
+    unread: notifications.filter((x) => !x.read).length,
     notifSessionCount: live.notifSessionCount + 1,
   })
 
