@@ -1,4 +1,4 @@
-# CryptoPulse — деплой и автономная работа
+# CryptoPulse — деплой на VPS
 
 ## Состав системы
 
@@ -6,90 +6,120 @@
 |---|---|---|
 | Next.js (web) | 3000 | UI, API, авторизация, БД (Prisma/SQLite) |
 | market-service | 3003 | socket.io, стримы 8 бирж, стены/движения/спреды/новости |
-| Caddy | 81 | reverse-proxy (внешний вход) |
-| watchdog | — | следит, чтобы всё работало неделями |
+| Caddy | 80/443 | reverse-proxy, авто-HTTPS (Let's Encrypt) |
+| systemd + watchdog | — | автозапуск при загрузке, health-check каждые 20с |
 
-## Быстрый деплой (VPS / VM)
+## Требования к VPS
+
+- Ubuntu 22.04+ / Debian 12+ (работает и на других systemd-дистрибутивах)
+- **1 vCPU / 2 ГБ RAM** минимум (рекомендуется 2 vCPU / 4 ГБ — при сборке Next
+  занимает ~1.5 ГБ; на 1 ГБ RAM заранее добавьте swap:
+  `fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`)
+- Открытые порты 80 и 443
+
+## Установка — один скрипт
 
 ```bash
-# 1. Зависимости: Node 20+/Bun, Caddy
-curl -fsSL https://bun.sh/install | bash
+# 1. Забрать проект на VPS (любым способом)
+git clone <ваш-репозиторий> cryptopulse && cd cryptopulse
+#   …или: rsync -av --exclude node_modules --exclude .next ./ user@vps:/opt/cryptopulse
 
-# 2. Проект
-git clone <repo> cryptopulse && cd cryptopulse
-bun install
-cd mini-services/market-service && bun install && cd ../../
-
-# 3. Конфиг
-cp .env.example .env    # и прописать SESSION_SECRET=$(openssl rand -hex 32)
-
-# 4. База (SQLite) + админ
-bun run db:push
-bun run scripts/seed.ts   # admin@screen.io / admin123 (смените пароль!)
-
-# 5. Production-сборка Next
-bun run build             # .next/standalone + static + public
-
-# 6. Запуск всего (market-service + next standalone + caddy + watchdog)
-scripts/start-all.sh --prod
+# 2. Запустить подготовку
+sudo bash deploy/setup-vps.sh                 # вход по IP:  http://<IP>/
+sudo bash deploy/setup-vps.sh example.com     # домен + автоматический HTTPS
 ```
 
-Сайт доступен на `:81` (Caddy → :3000), socket.io проходит через тот же вход
-(`/?XTransformPort=3003`).
+Скрипт идемпотентен — повторный запуск ничего не сломает. Он ставит Bun и
+Caddy системно, готовит `.env` (генерирует `SESSION_SECRET`), поднимает базу,
+создаёт администратора, собирает production-сборку и регистрирует systemd-сервис.
 
-## Автономность (недели без присмотра)
+**Учётные данные админа** печатаются в выводе `seed` (пароль генерируется
+случайный, если не задан). Задать свои можно в `.env`:
 
-`scripts/watchdog.sh` (поднимается автоматически) каждые 20 секунд:
+```env
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=свой-надёжный-пароль
+```
 
-- **health-check** `:3000` и `:3003` — упало → перезапускает (режим Next
-  читает из `scripts/logs/next-mode`: `prod` / `dev`);
-- **memory-guard** — next RSS > 2.6 ГБ или market-service RSS > 1.5 ГБ →
-  мягкий перезапуск;
-- **ротация логов** — `dev.log`, `server.log`, `service.log`, `watchdog.log`
-  больше 40 МБ → остаётся хвост 5 МБ;
-- **ночные свежие рестарты** — market-service каждый день в 04:30,
-  next по воскресеньям в 04:50 (сброс дрейфа состояния);
-- **зомби-детект в market-service** — нет символов 15 минут → процесс сам
-  выходит (код 1), watchdog поднимает его заново;
-- `uncaughtException` / `unhandledRejection` в market-service логируются,
-  но не роняют процесс.
+## Что делает systemd + watchdog (автономность неделями)
 
-Клиент: socket.io `reconnection: Infinity` + кэш свечей и фолбэки в
-`/api/klines` — переживает рестарты сервисов без белых экранов.
+`cryptopulse.service` запускается при загрузке VPS и следит за watchdog
+(`Restart=always`). Watchdog каждые 20 секунд:
 
-## Обновление версии
+- **health-check** `:3000` и `:3003` — упало → перезапускает;
+- **memory-guard** — Next RSS > 2.6 ГБ или market-service RSS > 1.5 ГБ → мягкий перезапуск;
+- **ротация логов** — больше 40 МБ → остаётся хвост 5 МБ;
+- **ночные свежие рестарты** — market-service ежедневно в 04:30, Next по воскресеньям в 04:50;
+- **зомби-детект** в market-service — нет символов 15 минут → процесс сам
+  выходит (код 1), watchdog поднимает заново;
+- `uncaughtException` / `unhandledRejection` логируются, процесс не роняют.
+
+Клиент переживает рестарты без белых экранов: socket.io `reconnection: Infinity`,
+кэш свечей и фолбэки в `/api/klines`.
+
+## Обновление версии на VPS
 
 ```bash
+cd /opt/cryptopulse
 git pull
 bun install
+( cd mini-services/market-service && bun install )
 bun run build
-pkill -f 'standalone/server\.js'; pkill -f next-server
-scripts/start-all.sh --prod
+sudo systemctl restart cryptopulse
 ```
 
-## Systemd-вариант (по желанию, вместо watchdog)
+## Управление
 
-```ini
-# /etc/systemd/system/cryptopulse-watchdog.service
-[Unit]
-Description=CryptoPulse watchdog
-After=network.target
+```bash
+systemctl status cryptopulse      # статус
+journalctl -u cryptopulse -f      # живой лог watchdog'а
+sudo systemctl restart cryptopulse
+sudo systemctl stop cryptopulse
 
-[Service]
-WorkingDirectory=/opt/cryptopulse
-ExecStart=/bin/bash scripts/watchdog.sh
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
+# технические логи сервисов:
+tail -f server.log                                  # Next
+tail -f mini-services/market-service/service.log    # market-service
 ```
+
+## База данных
+
+SQLite живёт в `db/custom.db` (путь — в `.env`, `DATABASE_URL`).
+Резервная копия: `sqlite3 db/custom.db ".backup backup-$(date +%F).db"`.
+Перенос на новый сервер: скопировать файл + `.env`.
 
 ## Чек-лист перед продакшеном
 
-- [ ] `.env`: `SESSION_SECRET` сгенерирован
-- [ ] Пароль админа сменён (демо: `admin@screen.io / admin123`)
-- [ ] `bun run build` прошёл без ошибок
-- [ ] `scripts/start-all.sh --prod` — все «OK» в выводе
-- [ ] `scripts/logs/watchdog.log` пишет health-строки
-- [ ] Открыт только :81 (3000/3003 — только localhost)
+- [ ] `.env`: `SESSION_SECRET` сгенерирован (setup-vps.sh делает это сам)
+- [ ] Пароль админа сменён/задан свой (`ADMIN_PASSWORD` в `.env`)
+- [ ] Домен указывает на IP VPS, HTTPS выпущен (замок в браузере)
+- [ ] `systemctl is-enabled cryptopulse` → `enabled`
+- [ ] Открывается `http://<домен>/`, логин работает, вкладки живые
+- [ ] Порты 3000/3003 закрыты снаружи (доступ только через Caddy)
+
+## Ручной вариант (без setup-скрипта)
+
+```bash
+# зависимости
+curl -fsSL https://bun.sh/install | bash
+# caddy — по инструкции: https://caddyserver.com/docs/install
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
+curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update && sudo apt install -y caddy
+
+# проект
+cp .env.example .env          # заполнить SESSION_SECRET и DATABASE_URL
+bun install && ( cd mini-services/market-service && bun install )
+bun run db:push               # схема БД
+bun scripts/seed.ts           # админ (кредиты из .env / случайный пароль)
+bun run build                 # standalone-сборка
+sudo cp deploy/Caddyfile.production /etc/caddy/Caddyfile   # заменить домен!
+sudo systemctl reload caddy
+
+# запуск: либо systemd (рекомендуется)
+sudo cp deploy/cryptopulse.service /etc/systemd/system/    # поправить WorkingDirectory!
+sudo systemctl daemon-reload && sudo systemctl enable --now cryptopulse
+
+# …либо без systemd (тогда watchdog запустится сам):
+scripts/start-all.sh --prod
+```

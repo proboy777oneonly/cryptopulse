@@ -8,7 +8,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { toastError, toastSuccess } from '@/engines/notifier'
+import { toastSuccess } from '@/engines/notifier'
 import type { SessionUser } from '@/stores/app-store'
 import { setHash } from '@/lib/nav'
 
@@ -275,19 +275,6 @@ export function AuthView({ mode, onBack, onDone }: { mode: Mode; onBack: () => v
             </Button>
           </form>
 
-          {mode === 'login' && (
-            <button
-              onClick={() => { setEmail('admin@screen.io'); setPassword('admin123') }}
-              className="mt-4 flex w-full items-center gap-2.5 rounded-xl border border-dashed border-[var(--border)] bg-[var(--muted)] px-3.5 py-2.5 text-left text-[11px] leading-relaxed text-[var(--muted-foreground)] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_45%,transparent)]"
-            >
-              <Radar className="h-4 w-4 shrink-0" style={{ color: 'var(--acc)' }} />
-              <span>
-                <span className="font-bold" style={{ color: 'var(--acc)' }}>Демо-доступ:</span> нажмите, чтобы подставить
-                admin@screen.io / admin123 — вход с правами администратора
-              </span>
-            </button>
-          )}
-
           <div className="mt-6 text-center text-xs text-[var(--muted-foreground)]">
             {mode === 'login' ? (
               <>Нет аккаунта? <button onClick={() => setHash('#/register')} className="font-semibold" style={{ color: 'var(--acc)' }}>Зарегистрироваться</button></>
@@ -299,19 +286,4 @@ export function AuthView({ mode, onBack, onDone }: { mode: Mode; onBack: () => v
       </div>
     </div>
   )
-}
-
-export async function demoLogin(): Promise<SessionUser | null> {
-  try {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@screen.io', password: 'admin123' }),
-    })
-    const json = await res.json()
-    return res.ok ? json.user : null
-  } catch {
-    toastError('Не удалось войти в демо-режим')
-    return null
-  }
 }

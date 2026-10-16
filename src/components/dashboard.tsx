@@ -135,7 +135,7 @@ export function Dashboard({ children }: { children: ReactElement }) {
           <div className="text-[11px] font-bold">{dataMode === 'live' ? 'Поток данных активен' : dataMode === 'reconnecting' ? 'Переподключение…' : 'Подключение…'}</div>
           <div className="text-[10px] text-[var(--muted-foreground)]">8 бирж · F+S · LIVE</div>
         </div>
-        <span className="cp-num text-[10px] font-bold text-[var(--muted-foreground)]">v3.5.0</span>
+        <span className="cp-num text-[10px] font-bold text-[var(--muted-foreground)]">v3.6.0</span>
       </div>
     </div>
   )

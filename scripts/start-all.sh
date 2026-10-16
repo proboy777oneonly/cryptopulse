@@ -5,7 +5,8 @@
 #
 # Использование:
 #   scripts/start-all.sh          # dev-режим Next (next dev)
-#   scripts/start-all.sh --prod   # production-режим Next (standalone server)
+#   scripts/start-all.sh --prod                # production-режим Next (standalone server)
+#   scripts/start-all.sh --prod --no-watchdog  # без watchdog (им управляет systemd)
 # ════════════════════════════════════════════════════════════════════
 
 set -u
@@ -14,7 +15,11 @@ LOGS="$BASE/scripts/logs"
 mkdir -p "$LOGS"
 
 PROD=0
-[ "${1:-}" = "--prod" ] && PROD=1
+NO_WATCHDOG=0
+for arg in "${@:-}"; do
+  [ "$arg" = "--prod" ] && PROD=1
+  [ "$arg" = "--no-watchdog" ] && NO_WATCHDOG=1
+done
 echo "$([ "$PROD" = 1 ] && echo prod || echo dev)" > "$LOGS/next-mode"
 
 log() { echo "[start-all $(date '+%F %T')] $*"; }
@@ -83,6 +88,11 @@ else
 fi
 
 # ── watchdog ────────────────────────────────────────────────────────
+if [ "$NO_WATCHDOG" = "1" ]; then
+  log "watchdog: пропущен (--no-watchdog — им управляет systemd)"
+  log "──────── готово ────────"
+  exit 0
+fi
 WD_PID=""
 [ -f "$LOGS/watchdog.pid" ] && WD_PID=$(cat "$LOGS/watchdog.pid" 2>/dev/null || echo "")
 if [ -n "$WD_PID" ] && kill -0 "$WD_PID" 2>/dev/null; then

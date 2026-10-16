@@ -1,0 +1,30 @@
+# CryptoPulse — systemd-юнит (автостарт при загрузке VPS + рестарт watchdog)
+#
+# Установка (выполняется автоматически deploy/setup-vps.sh):
+#   sudo cp deploy/cryptopulse.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now cryptopulse
+#
+# Путь к проекту ниже заменяется setup-vps.sh на актуальный.
+
+[Unit]
+Description=CryptoPulse — watchdog (market-service + web + health-checks)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/cryptopulse
+# 1) поднять все сервисы (без своего watchdog — им управляет systemd)
+# 2) основной процесс — watchdog: следит за :3000 и :3003, памятью, логами
+ExecStartPre=/bin/bash -lc 'exec scripts/start-all.sh --prod --no-watchdog'
+ExecStart=/bin/bash -lc 'exec scripts/watchdog.sh'
+Restart=always
+RestartSec=10
+# логи в journalctl -u cryptopulse
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cryptopulse
+
+[Install]
+WantedBy=multi-user.target

@@ -8,7 +8,7 @@ import { EngineProvider } from '@/components/engine-provider'
 import { Dashboard } from '@/components/dashboard'
 import { ViewsRouter } from '@/components/views'
 import { Landing } from '@/components/landing'
-import { AuthView, demoLogin } from '@/components/auth-view'
+import { AuthView } from '@/components/auth-view'
 import { useApp, type SessionUser } from '@/stores/app-store'
 import { MotionConfig } from 'framer-motion'
 import { clearHash, setHash } from '@/lib/nav'
@@ -43,7 +43,6 @@ function Splash() {
 export function AppRoot() {
   const [booted, setBooted] = useState(false)
   const [authScreen, setAuthScreen] = useState<AuthScreen>('landing')
-  const [demoLoading, setDemoLoading] = useState(false)
   const user = useApp((s) => s.user)
   const setUser = useApp((s) => s.setUser)
   const hydrate = useApp((s) => s.hydrate)
@@ -136,13 +135,6 @@ export function AppRoot() {
     await loadServerSettings()
   }
 
-  const onDemo = async () => {
-    setDemoLoading(true)
-    const u = await demoLogin()
-    setDemoLoading(false)
-    if (u) await onAuthDone(u)
-  }
-
   if (!booted) return <Splash />
 
   return (
@@ -161,8 +153,6 @@ export function AppRoot() {
           <Landing
             onLogin={() => { setAuthScreen('login'); setHash('#/login') }}
             onRegister={() => { setAuthScreen('register'); setHash('#/register') }}
-            onDemo={onDemo}
-            demoLoading={demoLoading}
           />
         ) : (
           <AuthView

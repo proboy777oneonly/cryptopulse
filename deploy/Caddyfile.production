@@ -1,0 +1,41 @@
+# CryptoPulse — production Caddyfile (домен + автоматический HTTPS)
+#
+# Замените crypto.example.com на свой домен и выполните:
+#   sudo cp deploy/Caddyfile.production /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# Важно: DNS-запись домена должна указывать на IP вашего VPS —
+# после этого Caddy сам выпустит сертификат Let's Encrypt.
+
+crypto.example.com {
+	# socket.io market-сервиса (клиент ходит с ?XTransformPort=3003)
+	@transform_port_query {
+		query XTransformPort=*
+	}
+
+	handle @transform_port_query {
+		reverse_proxy localhost:{query.XTransformPort} {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# веб-приложение (Next.js :3000)
+	handle {
+		reverse_proxy localhost:3000 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# сжатие и долгое кэширование статики
+	encode gzip zstd
+	@static {
+		path /_next/static/*
+	}
+	header @static Cache-Control "public, max-age=31536000, immutable"
+}
