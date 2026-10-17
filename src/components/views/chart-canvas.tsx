@@ -1,19 +1,24 @@
 'use client'
 
 // ════════════════════════════════════════════════════════════════════
-// Canvas-график свечей: зум колесом, панорама драгом во всех направлениях,
-// кроссхэйр, рисовалки (тренд/гориз/верт/прямоугольник/фибо),
-// линейка на колёсико (живёт, пока колёсико зажато; большой шрифт %),
-// магнит с привязкой к OHLC на Ctrl, hi/lo-метки диапазона, вотермарк.
-// Рисунки хранятся в localStorage по ключу графика.
+// Canvas-график свечей: зум колесом + кнопками (императивный handle),
+// панорама драгом во всех направлениях, кроссхэйр, рисовалки,
+// линейка на колёсико (%, бары/минуты, проторгованный объём $),
+// магнит на Ctrl, живая последняя свеча из потока, ценовые алерты.
 // ════════════════════════════════════════════════════════════════════
 
-import { useCallback, useEffect, useRef } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
 import { cn } from '@/lib/utils'
 
 export interface Candle { t: number; o: number; h: number; l: number; c: number; v: number }
-export type ChartTool = 'cursor' | 'trend' | 'hline' | 'vline' | 'rect' | 'fib' | 'ruler'
+export type ChartTool = 'cursor' | 'trend' | 'hline' | 'vline' | 'rect' | 'fib' | 'ruler' | 'alert'
 export type DrawType = 'trend' | 'hline' | 'vline' | 'rect' | 'fib'
+
+/** уровень ценового уведомления, выставленный на графике */
+export interface PriceMark {
+  id: string
+  price: number
+}
 
 export interface ChartDrawing {
   id: string
@@ -160,13 +165,25 @@ export interface CandleChartProps {
   label?: string
   /** левый отступ канваса — место под вертикальную панель рисовалок */
   padLeft?: number
+  /** уровни ценовых уведомлений — рисуются янтарной пунктирной линией */
+  priceMarks?: PriceMark[]
+  /** клик инструментом «алерт» по графику */
+  onAlertSet?: (price: number) => void
+  /** клик инструментом «алерт» по существующему уровню — удалить */
+  onAlertRemove?: (id: string) => void
 }
 
-export function CandleChart({
+/** императивное управление видом графика (кнопки зума) */
+export interface ChartHandle {
+  zoomBy: (factor: number) => void
+  reset: () => void
+}
+
+export const CandleChart = forwardRef<ChartHandle, CandleChartProps>(function CandleChart({
   candles, interval, chartKey, tool = 'cursor', onToolDone, livePrice, chg24,
   theme, className, showVolume = true, interactive = true, clearTick,
-  label, padLeft = 6,
-}: CandleChartProps) {
+  label, padLeft = 6, priceMarks, onAlertSet, onAlertRemove,
+}, ref) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewRef = useRef<ViewBox>({ bars: 130, offset: -6, pRange: null })
@@ -177,10 +194,12 @@ export function CandleChart({
   const candlesRef = useRef<Candle[]>(candles)
   const toolRef = useRef(tool)
   const sizeRef = useRef({ w: 0, h: 0 })
+  const marksRef = useRef<PriceMark[]>(priceMarks ?? [])
 
   // зеркала пропсов в рефах — только внутри эффектов
   useEffect(() => { candlesRef.current = candles }, [candles])
   useEffect(() => { toolRef.current = tool }, [tool])
+  useEffect(() => { marksRef.current = priceMarks ?? [] }, [priceMarks])
 
   // ── Цвета из CSS-переменных темы ──────────────────────────────────
   const readColors = useCallback(() => {
@@ -398,10 +417,16 @@ export function CandleChart({
       }
     }
 
-    // свечи — хвост в пиксельной сетке, тело с капом ширины
+    // свечи — хвост в пиксельной сетке, тело с капом ширины;
+    // последняя свеча дышит в реальном времени: livePrice корректирует её OHLC
     const bodyW = clamp(barW * 0.66, 1, 21)
+    const liveC = livePrice && livePrice > 0 ? livePrice : null
+    const liveAdj = (i: number, cd: Candle): Candle =>
+      liveC !== null && i === len - 1
+        ? { ...cd, c: liveC, h: Math.max(cd.h, liveC), l: Math.min(cd.l, liveC) }
+        : cd
     for (let i = i0; i <= i1; i++) {
-      const cd = cs[i]
+      const cd = liveAdj(i, cs[i])
       const x = xOfIdx(i)
       const up = cd.c >= cd.o
       const col = up ? C.pos : C.neg
@@ -420,13 +445,16 @@ export function CandleChart({
       ctx.fillRect(Math.round(x - bodyW / 2), Math.round(top), Math.round(bodyW), Math.max(1, Math.round(bh)))
     }
 
-    // метки hi/lo видимого диапазона
+    // метки hi/lo видимого диапазона (с учётом живой свечи)
     if (i1 > i0 + 2) {
       let hiI = i0
       let loI = i0
       for (let i = i0 + 1; i <= i1; i++) {
-        if (cs[i].h > cs[hiI].h) hiI = i
-        if (cs[i].l < cs[loI].l) loI = i
+        const a = liveAdj(i, cs[i])
+        const b1 = liveAdj(hiI, cs[hiI])
+        const b2 = liveAdj(loI, cs[loI])
+        if (a.h > b1.h) hiI = i
+        if (a.l < b2.l) loI = i
       }
       const mark = (idx: number, p: number, above: boolean) => {
         const x = xOfIdx(idx)
@@ -442,8 +470,8 @@ export function CandleChart({
         ctx.textAlign = 'center'
         ctx.fillText(txt, clamp(x, padL + w / 2, padL + plotW - w / 2), yy + 7)
       }
-      mark(hiI, cs[hiI].h, true)
-      mark(loI, cs[loI].l, false)
+      mark(hiI, liveAdj(hiI, cs[hiI]).h, true)
+      mark(loI, liveAdj(loI, cs[loI]).l, false)
     }
 
     // последняя цена (при ручной панораме чип прилипает к краю области)
@@ -494,7 +522,7 @@ export function CandleChart({
       if (label) {
         ctx.font = 'bold 11px ui-monospace, Menlo, monospace'
         let txt = label
-        const maxLabelW = Math.max(120, plotW / 2 - 190)
+        const maxLabelW = Math.max(150, plotW / 2 - 100)
         while (ctx.measureText(txt).width > maxLabelW && txt.includes(' · ')) {
           txt = txt.split(' · ').slice(1).join(' · ')
         }
@@ -713,13 +741,22 @@ export function CandleChart({
         ctx.arc(ax, ay, 3, 0, Math.PI * 2)
         ctx.fill()
       }
-      // подпись: большой % + Δцены + бары
+      // подпись: большой % + бары·длительность + проторгованный объём $
       const dP = rulerLive.p2 - rulerLive.p1
       const dPct = rulerLive.p1 > 0 ? (dP / rulerLive.p1) * 100 : 0
       const bars = Math.abs(Math.round((rulerLive.t2 - rulerLive.t1) / intervalMs))
+      // объём: сумма свечей диапазона (котируемый объём в $)
+      const tA = Math.min(rulerLive.t1, rulerLive.t2)
+      const tB = Math.max(rulerLive.t1, rulerLive.t2)
+      let sumVol = 0
+      for (let i = 0; i < len; i++) {
+        if (cs[i].t > tB) break
+        if (cs[i].t >= tA - intervalMs / 2) sumVol += cs[i].v
+      }
+      const volTxt = sumVol >= 1e9 ? `$${(sumVol / 1e9).toFixed(2)}B` : sumVol >= 1e6 ? `$${(sumVol / 1e6).toFixed(1)}M` : sumVol >= 1e3 ? `$${(sumVol / 1e3).toFixed(0)}K` : `$${Math.round(sumVol)}`
       const bigPct = `${dPct >= 0 ? '+' : ''}${dPct.toFixed(2)}%`
-      const line2 = `${dP >= 0 ? '+' : ''}${fmtChartPrice(dP)}`
-      const line3 = `${bars} бар. · ${fmtDuration(Math.abs(rulerLive.t2 - rulerLive.t1))}`
+      const line2 = `${bars} бар · ${fmtDuration(Math.abs(rulerLive.t2 - rulerLive.t1))}`
+      const line3 = `объём ${volTxt}`
       ctx.font = 'bold 21px ui-monospace, Menlo, monospace'
       const w1 = ctx.measureText(bigPct).width
       ctx.font = 'bold 11px ui-monospace, Menlo, monospace'
@@ -727,7 +764,7 @@ export function CandleChart({
       ctx.font = '10px ui-monospace, Menlo, monospace'
       const w3 = ctx.measureText(line3).width
       const bw = Math.max(w1, w2, w3) + 20
-      const bh = 60
+      const bh = 62
       const bx = clamp(x2 + 12, padL, padL + plotW - bw - 4)
       const by = clamp(y2 - bh - 10, padT + 4, padT + fullH - bh)
       ctx.fillStyle = C.card
@@ -740,12 +777,48 @@ export function CandleChart({
       ctx.textAlign = 'center'
       ctx.font = 'bold 21px ui-monospace, Menlo, monospace'
       ctx.fillStyle = col
-      ctx.fillText(bigPct, bx + bw / 2, by + 21)
+      ctx.fillText(bigPct, bx + bw / 2, by + 22)
       ctx.font = 'bold 11px ui-monospace, Menlo, monospace'
-      ctx.fillText(line2, bx + bw / 2, by + 38)
+      ctx.fillStyle = C.fg
+      ctx.fillText(line2, bx + bw / 2, by + 40)
       ctx.font = '10px ui-monospace, Menlo, monospace'
       ctx.fillStyle = C.muted
-      ctx.fillText(line3, bx + bw / 2, by + 52)
+      ctx.fillText(line3, bx + bw / 2, by + 54)
+    }
+
+    // ── Уровни ценовых уведомлений ───────────────────────────────────
+    const marks = marksRef.current
+    if (marks && marks.length > 0) {
+      for (const mk of marks) {
+        const y = yOfP(mk.price)
+        if (y < padT - 4 || y > padT + chartH + 4) continue
+        // пунктирная янтарная линия
+        ctx.setLineDash([7, 5])
+        ctx.strokeStyle = '#fbbf24'
+        ctx.lineWidth = 1.3
+        ctx.beginPath()
+        ctx.moveTo(padL, Math.round(y) + 0.5)
+        ctx.lineTo(padL + plotW, Math.round(y) + 0.5)
+        ctx.stroke()
+        ctx.setLineDash([])
+        // колокольчик-маркер слева
+        ctx.fillStyle = '#fbbf24'
+        ctx.beginPath()
+        ctx.arc(padL + 8, y, 3.2, 0, Math.PI * 2)
+        ctx.fill()
+        // чип цены справа
+        const atxt = fmtChartPrice(mk.price)
+        ctx.font = 'bold 10px ui-monospace, Menlo, monospace'
+        const aw = ctx.measureText(atxt).width + 10
+        let ay = y
+        if (Math.abs(ay - yLast) < 15) ay = yLast + (y <= yLast ? -15 : 15)
+        roundRect(ctx, padL + plotW + 2, ay - 8, Math.min(aw, padR - 4), 16, 4)
+        ctx.fillStyle = '#fbbf24'
+        ctx.fill()
+        ctx.fillStyle = '#1c1503'
+        ctx.textAlign = 'left'
+        ctx.fillText(atxt, padL + plotW + 7, ay)
+      }
     }
 
     // ── Кроссхэйр ──────────────────────────────────────────────────
@@ -820,6 +893,29 @@ export function CandleChart({
   // ── Загрузка рисунков при смене ключа ─────────────────────────────
   const redrawRef = useRef(redraw)
   useEffect(() => { redrawRef.current = redraw }, [redraw])
+
+  // перерисовка при смене уровней алертов
+  useEffect(() => { redrawRef.current() }, [priceMarks])
+
+  // императивный handle: кнопки зума/сброса снаружи
+  useImperativeHandle(ref, () => ({
+    zoomBy: (factor: number) => {
+      const sc = computeScale()
+      if (!sc) return
+      const view = viewRef.current
+      const newBars = clamp(view.bars * factor, 15, Math.max(60, sc.len + 40))
+      // якорь — центр видимой области
+      const anchorIdx = sc.startIdx + 0.5 * view.bars
+      const newRight = anchorIdx + 0.5 * newBars
+      view.bars = newBars
+      view.offset = sc.len - newRight
+      redrawRef.current()
+    },
+    reset: () => {
+      viewRef.current = { bars: 130, offset: -6, pRange: null }
+      redrawRef.current()
+    },
+  }), [computeScale])
 
   useEffect(() => {
     if (chartKey) {
@@ -1040,6 +1136,25 @@ export function CandleChart({
       redraw()
       return
     }
+    // ценовое уведомление: клик по уровню — удалить, иначе — поставить
+    if (t === 'alert') {
+      const price = sc.pOfY(p.y)
+      const marks = marksRef.current
+      if (marks && marks.length > 0) {
+        // близко к существующему уровню (±9px) — снимаем его
+        for (const mk of marks) {
+          if (Math.abs(sc.yOfP(mk.price) - p.y) < 9) {
+            onAlertRemove?.(mk.id)
+            redraw()
+            return
+          }
+        }
+      }
+      onAlertSet?.(price)
+      onToolDone?.()
+      redraw()
+      return
+    }
     if (t === 'hline' || t === 'vline') {
       if (chartKey) {
         drawId += 1
@@ -1141,4 +1256,4 @@ export function CandleChart({
       />
     </div>
   )
-}
+})

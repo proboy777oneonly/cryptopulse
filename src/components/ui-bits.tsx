@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Check } from 'lucide-react'
-import { EX_MAP, type ExchangeId } from '@/engines/types'
+import { EX_MAP, type ExchangeId, type TickerSnapshot } from '@/engines/types'
+import { ExIcon } from '@/components/ex-icons'
 import { useLive } from '@/stores/live-store'
 import { cn } from '@/lib/utils'
 
 // ─── Тикер с копированием по клику ────────────────────────────────────
 
-async function copyText(text: string): Promise<boolean> {
+export async function copyText(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text)
@@ -76,19 +77,21 @@ export function splitQuote(symbol: string): { base: string; quote: string } {
 
 // ─── Бейдж биржи ──────────────────────────────────────────────────────
 
-export function ExBadge({ ex, size = 'md' }: { ex: ExchangeId; size?: 'sm' | 'md' }) {
+export function ExBadge({ ex, size = 'md', label }: { ex: ExchangeId; size?: 'sm' | 'md'; label?: boolean }) {
   const meta = EX_MAP[ex]
   if (!meta) return null
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-md border font-semibold uppercase tracking-wide',
+        'inline-flex items-center rounded-md border font-semibold uppercase tracking-wide',
+        label ? 'gap-1.5' : '',
         size === 'sm' ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-1 text-[10px]',
       )}
       style={{ color: meta.color, borderColor: `${meta.color}44`, background: `${meta.color}12` }}
+      title={meta.name}
     >
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: meta.color }} />
-      {ex === 'HL' ? 'HYPERLIQ' : ex === 'ASTER' ? 'ASTER' : meta.name}
+      <ExIcon ex={ex} size={size === 'sm' ? 11 : 13} />
+      {label && (ex === 'HL' ? 'HYPERLIQ' : ex === 'ASTER' ? 'ASTER' : meta.name)}
     </span>
   )
 }
@@ -308,4 +311,20 @@ export function useUptime(): string {
     const sec = s % 60
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
   }, [sessionStart, tick])
+}
+
+// ─── Троттлинг тикеров: срез потока не чаще раза в ms ─────────────────
+// Освобождает тяжёлые списки (сотни строк) от перерисовки каждый тик.
+
+export function useTickersThrottled<T>(ms: number, selector: (t: Record<string, TickerSnapshot>) => T): T {
+  const [snap, setSnap] = useState<T>(() => selector(useLive.getState().tickers))
+  const selRef = useRef(selector)
+  useEffect(() => { selRef.current = selector }, [selector])
+  useEffect(() => {
+    const apply = () => setSnap(selRef.current(useLive.getState().tickers))
+    apply()
+    const iv = setInterval(apply, ms)
+    return () => clearInterval(iv)
+  }, [ms])
+  return snap
 }

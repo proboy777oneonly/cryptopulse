@@ -75,8 +75,9 @@ interface SourceSpec {
 }
 
 function binanceSpec(apiBase: string, symbol: string, interval: string, limit: number): SourceSpec {
+  const cap = apiBase.includes('fapi') ? 1500 : 1000
   return {
-    url: `${apiBase}/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=${limit}`,
+    url: `${apiBase}/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=${Math.min(limit, cap)}`,
     parse: (d: unknown) => {
       const rows = d as unknown[][]
       if (!Array.isArray(rows)) return []
@@ -98,9 +99,9 @@ function bybitSpec(category: 'linear' | 'spot', symbol: string, interval: string
   }
 }
 
-function okxSpec(instId: string, bar: string, limit: number, quoteIdx: number): SourceSpec {
+function okxSpec(instId: string, bar: string, limit: number, quoteIdx: number, after?: string): SourceSpec {
   return {
-    url: `https://www.okx.com/api/v5/market/candles?instId=${encodeURIComponent(instId)}&bar=${bar}&limit=${Math.min(limit, 300)}`,
+    url: `https://www.okx.com/api/v5/market/candles?instId=${encodeURIComponent(instId)}&bar=${bar}&limit=${Math.min(limit, 300)}${after ? `&after=${after}` : ''}`,
     // OKX: [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm], новые сверху
     parse: (d: unknown) => {
       const rows = (d as { data?: unknown[][] })?.data ?? []
@@ -114,6 +115,23 @@ function okxSpec(instId: string, bar: string, limit: number, quoteIdx: number): 
         .sort((a, b) => a.t - b.t)
     },
   }
+}
+
+/** OKX отдаёт максимум 300 свечей — добираем историю пагинацией (after = ts самой старой) */
+async function fetchOkxSeries(instId: string, bar: string, limit: number, quoteIdx: number): Promise<Candle[] | null> {
+  const pages = Math.ceil(Math.min(limit, 900) / 300)
+  const all: Candle[] = []
+  let after: string | undefined
+  for (let p = 0; p < pages; p++) {
+    const spec = okxSpec(instId, bar, 300, quoteIdx, after)
+    const part = await fetchSource(spec)
+    if (!part || part.length === 0) break
+    all.push(...part)
+    if (part.length < 300) break
+    after = String(part[0].t)
+  }
+  if (all.length === 0) return null
+  return normalize(all)
 }
 
 /** источники по убыванию приоритета; фолбэк — тот же актив на другом рынке */
@@ -181,7 +199,7 @@ export async function GET(req: NextRequest) {
   const m = (sp.get('m') ?? 'F') as Mkt
   const symbol = (sp.get('symbol') ?? '').toUpperCase()
   const interval = sp.get('interval') ?? '1h'
-  const limit = Math.max(50, Math.min(500, Number(sp.get('limit') ?? 400) || 400))
+  const limit = Math.max(50, Math.min(1500, Number(sp.get('limit') ?? 1000) || 1000))
 
   if (!['BINANCE', 'BYBIT', 'OKX'].includes(ex) || !['F', 'S'].includes(m)) {
     return NextResponse.json({ error: 'bad exchange/market' }, { status: 400 })
@@ -205,6 +223,26 @@ export async function GET(req: NextRequest) {
   }
 
   // по источникам по очереди; отдаём кэш-полустухлое, если все пали
+  if (ex === 'OKX') {
+    const base = symbol.replace(/USDT$/, '')
+    if (base && base !== symbol) {
+      const attempts: [string, number][] = m === 'F'
+        ? [[`${base}-USDT-SWAP`, 7], [`${base}-USDT`, 6]]
+        : [[`${base}-USDT`, 6], [`${base}-USDT-SWAP`, 7]]
+      for (const [instId, qi] of attempts) {
+        const candles = await fetchOkxSeries(instId, OKX_IV[interval], limit, qi)
+        if (candles) {
+          cache.set(key, { at: Date.now(), candles })
+          return NextResponse.json({ candles })
+        }
+      }
+    }
+    if (hit) {
+      return NextResponse.json({ candles: hit.candles, cached: true, stale: true })
+    }
+    return NextResponse.json({ error: 'upstream unavailable' }, { status: 502 })
+  }
+
   for (const spec of sources) {
     const candles = await fetchSource(spec)
     if (candles) {

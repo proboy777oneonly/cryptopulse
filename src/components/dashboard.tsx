@@ -3,10 +3,11 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
-  CandlestickChart, ChartCandlestick, Gauge, Home, Layers, ListPlus, Menu, MonitorSmartphone, Newspaper, Radar,
+  CandlestickChart, ChartCandlestick, Gauge, Home, Layers, ListPlus, Menu, MonitorSmartphone, Newspaper,
   Settings as SettingsIcon, Users2, Bell,
 } from 'lucide-react'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import { CpWordmark } from '@/components/logo'
 import { useApp, type ViewId } from '@/stores/app-store'
 import { useLive } from '@/stores/live-store'
 import { DashboardHeader, UserAvatar } from '@/components/header'
@@ -135,7 +136,7 @@ export function Dashboard({ children }: { children: ReactElement }) {
           <div className="text-[11px] font-bold">{dataMode === 'live' ? 'Поток данных активен' : dataMode === 'reconnecting' ? 'Переподключение…' : 'Подключение…'}</div>
           <div className="text-[10px] text-[var(--muted-foreground)]">8 бирж · F+S · LIVE</div>
         </div>
-        <span className="cp-num text-[10px] font-bold text-[var(--muted-foreground)]">v3.6.0</span>
+        <span className="cp-num text-[10px] font-bold text-[var(--muted-foreground)]">v3.7.0</span>
       </div>
     </div>
   )
@@ -144,14 +145,8 @@ export function Dashboard({ children }: { children: ReactElement }) {
     <div className="relative z-10 flex h-screen overflow-hidden">
       {/* ─── Десктопный сайдбар ─── */}
       <aside className="hidden w-[248px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--sidebar)] backdrop-blur-xl lg:flex" aria-label="Боковая панель">
-        <div className="flex h-16 items-center gap-2.5 border-b border-[var(--border)] px-5">
-          <div className="cp-glow-sm flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: 'linear-gradient(135deg, var(--acc), var(--acc-2))' }}>
-            <Radar className="h-5 w-5 text-white" />
-          </div>
-          <div className="leading-tight">
-            <div className="text-[15px] font-black tracking-tight">CryptoPulse</div>
-            <div className="text-[9px] uppercase tracking-[0.22em] text-[var(--muted-foreground)]">screener pro</div>
-          </div>
+        <div className="flex h-16 items-center border-b border-[var(--border)] px-5">
+          <CpWordmark size={36} animated />
         </div>
         <div className="flex-1 overflow-y-auto py-4">{navList(go)}</div>
         {sidebarFooter}
@@ -180,11 +175,8 @@ export function Dashboard({ children }: { children: ReactElement }) {
             </SheetTrigger>
             <SheetContent side="left" className="w-[260px] border-[var(--border)] bg-[var(--card-solid)] p-0">
               <SheetTitle className="sr-only">Навигация</SheetTitle>
-              <div className="flex h-16 items-center gap-2.5 border-b border-[var(--border)] px-5">
-                <div className="cp-glow-sm flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: 'linear-gradient(135deg, var(--acc), var(--acc-2))' }}>
-                  <Radar className="h-5 w-5 text-white" />
-                </div>
-                <div className="text-[15px] font-black">CryptoPulse</div>
+              <div className="flex h-16 items-center border-b border-[var(--border)] px-5">
+                <CpWordmark size={36} animated />
               </div>
               <div className="flex h-[calc(100%-4rem)] flex-col">
                 <div className="flex-1 overflow-y-auto py-4">{navList(go)}</div>
@@ -200,13 +192,13 @@ export function Dashboard({ children }: { children: ReactElement }) {
 
         <DashboardHeader title={meta.title} subtitle={meta.subtitle} />
 
-        <main className="min-w-0 flex-1 overflow-y-auto">
+        <main className={cn('min-w-0 flex-1 overflow-y-auto', view === 'market' && 'overflow-hidden')}>
           <motion.div
             key={view}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.28, ease: 'easeOut' }}
-            className="p-4 sm:p-6"
+            className={view === 'market' ? 'h-full p-2 sm:p-2.5' : 'p-4 sm:p-6'}
           >
             {children}
           </motion.div>

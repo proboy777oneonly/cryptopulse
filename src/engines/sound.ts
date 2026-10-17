@@ -105,6 +105,61 @@ export const SOUNDS: SoundDef[] = [
       tone(ctx, out, t0, 987.8, 0.25, 'sine', 0.5, 0.16)
     },
   },
+  {
+    id: 'coin',
+    name: 'Монета',
+    play: (ctx, out, t0) => {
+      tone(ctx, out, t0, 987.77, 0.09, 'square', 0.28)
+      tone(ctx, out, t0, 1318.5, 0.34, 'square', 0.28, 0.085)
+    },
+  },
+  {
+    id: 'siren',
+    name: 'Сирена',
+    play: (ctx, out, t0) => {
+      for (let i = 0; i < 2; i++) {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.type = 'sine'
+        const base = t0 + i * 0.55
+        osc.frequency.setValueAtTime(620, base)
+        osc.frequency.linearRampToValueAtTime(990, base + 0.24)
+        osc.frequency.linearRampToValueAtTime(620, base + 0.5)
+        gain.gain.setValueAtTime(0.0001, base)
+        gain.gain.exponentialRampToValueAtTime(0.3, base + 0.03)
+        gain.gain.exponentialRampToValueAtTime(0.0001, base + 0.54)
+        osc.connect(gain).connect(out)
+        osc.start(base)
+        osc.stop(base + 0.58)
+      }
+    },
+  },
+  {
+    id: 'rise',
+    name: 'Подъём',
+    play: (ctx, out, t0) => {
+      const notes = [392, 523.3, 659.3, 784, 1046.5]
+      notes.forEach((f, i) => tone(ctx, out, t0, f, 0.16, 'triangle', 0.34, i * 0.075))
+    },
+  },
+  {
+    id: 'drop',
+    name: 'Спад',
+    play: (ctx, out, t0) => {
+      const notes = [1046.5, 830.6, 659.3, 493.9, 392]
+      notes.forEach((f, i) => tone(ctx, out, t0, f, 0.18, 'triangle', 0.34, i * 0.085))
+    },
+  },
+  {
+    id: 'pulse',
+    name: 'Пульс',
+    play: (ctx, out, t0) => {
+      for (let i = 0; i < 3; i++) {
+        tone(ctx, out, t0, 72, 0.11, 'sine', 0.65, i * 0.3)
+        tone(ctx, out, t0, 145, 0.07, 'sine', 0.22, i * 0.3 + 0.02)
+      }
+    },
+  },
 ]
 
 export const SOUND_MAP: Record<string, SoundDef> = Object.fromEntries(SOUNDS.map((s) => [s.id, s]))

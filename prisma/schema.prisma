@@ -29,3 +29,15 @@ model Settings {
   data      String
   updatedAt DateTime @updatedAt
 }
+
+// Коды подтверждения почты при регистрации (6 цифр, срок 10 минут)
+model VerifyCode {
+  id        String   @id @default(cuid())
+  email     String
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}

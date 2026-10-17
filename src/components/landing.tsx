@@ -4,12 +4,13 @@ import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Activity, ArrowRight, ArrowUpRight, Bell, BellRing, ChartCandlestick, Gauge, Globe2,
-  LineChart, Mic2, Radar, ShieldCheck, TrendingUp, Zap,
+  LineChart, Mic2, ShieldCheck, TrendingUp, Zap,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useApp } from '@/stores/app-store'
 import { THEMES } from '@/stores/app-store'
 import { EXCHANGES } from '@/engines/types'
+import { CpLogo } from '@/components/logo'
 import type { ReactNode } from 'react'
 
 const fadeUp = {
@@ -195,11 +196,9 @@ export function Landing({ onLogin, onRegister }: { onLogin: () => void; onRegist
       <header className="sticky top-0 z-50 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--background)_78%,transparent)] backdrop-blur-xl">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6">
           <a href="#top" className="flex items-center gap-2.5">
-            <div className="cp-glow flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: 'linear-gradient(135deg, var(--acc), var(--acc-2))' }}>
-              <Radar className="h-5 w-5 text-white" />
-            </div>
+            <CpLogo size={38} animated />
             <div className="leading-tight">
-              <div className="text-base font-black tracking-tight">CryptoPulse</div>
+              <div className="text-base font-black tracking-tight">Crypto<span style={{ color: 'var(--acc)' }}>Pulse</span></div>
               <div className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted-foreground)]">screener pro</div>
             </div>
           </a>
@@ -634,13 +633,11 @@ export function Landing({ onLogin, onRegister }: { onLogin: () => void; onRegist
       <footer className="mt-auto border-t border-[var(--border)] bg-[var(--muted)]">
         <div className="mx-auto flex w-full max-w-7xl flex-col items-center justify-between gap-4 px-4 py-8 sm:flex-row sm:px-6">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: 'linear-gradient(135deg, var(--acc), var(--acc-2))' }}>
-              <Radar className="h-4 w-4 text-white" />
-            </div>
+            <CpLogo size={32} animated={false} glow={false} />
             <div className="text-sm font-bold">CryptoPulse <span className="font-normal text-[var(--muted-foreground)]">· скринер нового поколения</span></div>
           </div>
           <div className="flex items-center gap-5 text-xs text-[var(--muted-foreground)]">
-            <span className="flex items-center gap-1.5"><Activity className="h-3.5 w-3.5" /> v3.6.0</span>
+            <span className="flex items-center gap-1.5"><Activity className="h-3.5 w-3.5" /> v3.7.0</span>
             <span className="flex items-center gap-1.5"><LineChart className="h-3.5 w-3.5" /> LIVE-данные 8 бирж</span>
             <span className="flex items-center gap-1.5"><TrendingUp className="h-3.5 w-3.5" /> 2026</span>
           </div>

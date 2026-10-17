@@ -3,7 +3,7 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { motion } from 'framer-motion'
 import {
-  Bell, CloudDownload, CloudUpload, Download, Mic2, Palette, RefreshCcw, Save, UserRound, Volume2,
+  Bell, CloudDownload, CloudUpload, Download, Mic2, Music4, Palette, PlayCircle, RefreshCcw, Save, UserRound, Volume2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -393,6 +393,42 @@ export function SettingsView() {
               </p>
             </div>
 
+            {/* Библиотека сигналов: нажал — прослушал */}
+            <div className="cp-border-glow rounded-2xl bg-card p-6">
+              <h3 className="flex items-center gap-2 text-sm font-bold"><Music4 className="h-4 w-4" style={{ color: 'var(--acc)' }} /> Библиотека сигналов</h3>
+              <p className="mt-1.5 text-[11px] text-[var(--muted-foreground)]">
+                Нажмите на сигнал, чтобы прослушать. Выбор звука для типа события — в таблице ниже.
+              </p>
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                {SOUNDS.map((s) => {
+                  const usedBy = (Object.entries(app.soundByType) as [string, string][])
+                    .filter(([, sid]) => sid === s.id)
+                    .map(([tid]) => NOTIF_TYPES.find((t) => t.id === tid)?.label)
+                    .filter(Boolean)
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => soundEngine.preview(s.id, app.volume)}
+                      className="group flex items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--muted)] px-3 py-2.5 text-left transition-all hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--acc)_45%,transparent)] hover:shadow-[0_8px_24px_-12px_var(--glow)]"
+                    >
+                      <span
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-110"
+                        style={{ background: 'color-mix(in srgb, var(--acc) 14%, transparent)', color: 'var(--acc)' }}
+                      >
+                        <PlayCircle className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs font-bold">{s.name}</span>
+                        {usedBy.length > 0 && (
+                          <span className="block truncate text-[9px] text-[var(--muted-foreground)]">{usedBy.join(' · ')}</span>
+                        )}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
             <div className="cp-border-glow rounded-2xl bg-card p-6">
               <h3 className="flex items-center gap-2 text-sm font-bold"><Mic2 className="h-4 w-4" style={{ color: 'var(--acc)' }} /> Голосовые уведомления</h3>
               <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -450,7 +486,14 @@ export function SettingsView() {
                       <div className="flex justify-center"><Switch checked={prefs.sound} onCheckedChange={(v) => app.setTypePrefs(t.id, { sound: v })} aria-label={`Звук для ${t.label}`} /></div>
                       <div className="flex justify-center"><Switch checked={prefs.voice} onCheckedChange={(v) => app.setTypePrefs(t.id, { voice: v })} aria-label={`Голос для ${t.label}`} /></div>
                       <div className="flex justify-center">
-                        <Select value={app.soundByType[t.id]} onValueChange={(v) => app.setSoundForType(t.id, v)}>
+                        <Select
+                          value={app.soundByType[t.id]}
+                          onValueChange={(v) => {
+                            app.setSoundForType(t.id, v)
+                            // выбран сигнал → сразу прослушиваем
+                            soundEngine.preview(v, app.volume)
+                          }}
+                        >
                           <SelectTrigger className="h-8 w-[68px] text-[10px]"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {SOUNDS.map((s) => (

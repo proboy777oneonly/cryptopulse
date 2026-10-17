@@ -338,14 +338,6 @@ export function DashboardHeader({ title, subtitle }: { title: string; subtitle: 
           <span className={cn('h-1.5 w-1.5 rounded-full', running && live && 'cp-pulse-dot')} style={{ background: live ? 'var(--pos)' : '#f59e0b' }} />
           <span className="cp-num text-xs font-bold">{uptime}</span>
         </div>
-        <span
-          className="rounded-lg border px-2 py-1 text-[10px] font-black tracking-widest"
-          style={live
-            ? { borderColor: 'color-mix(in srgb, var(--pos) 40%, transparent)', background: 'color-mix(in srgb, var(--pos) 10%, transparent)', color: 'var(--pos)' }
-            : { borderColor: 'color-mix(in srgb, #f59e0b 40%, transparent)', background: 'color-mix(in srgb, #f59e0b 10%, transparent)', color: '#f59e0b' }}
-        >
-          {live ? 'LIVE' : 'ОЖИД'}
-        </span>
         <NotificationBell />
         <ProfileMenu />
       </div>
