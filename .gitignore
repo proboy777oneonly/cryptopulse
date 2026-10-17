@@ -54,3 +54,8 @@ server.log
 # Skills directory
 /skills/
 db/*.db
+
+# sandbox artifacts
+/tool-results/
+/scripts/logs/
+*.pid
